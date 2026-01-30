@@ -346,13 +346,10 @@ export default function Chat() {
           />
           <VoiceChat
             disabled={isLoading || isInitializing}
+            sessionId={sessionId}
             onTranscript={(role, text) => {
-              // Add voice transcripts to message history
-              if (role === "user") {
-                setMessages(prev => [...prev, { role: "user", content: text }]);
-              } else {
-                setMessages(prev => [...prev, { role: "assistant", content: text }]);
-              }
+              // Add voice transcripts to message history (DB save is handled by VoiceConversation)
+              setMessages(prev => [...prev, { role, content: text }]);
             }}
           />
         </div>

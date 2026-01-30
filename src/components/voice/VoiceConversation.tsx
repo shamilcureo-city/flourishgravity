@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { VoiceIndicator } from "./VoiceIndicator";
@@ -9,13 +9,45 @@ import { toast } from "sonner";
 interface VoiceConversationProps {
   onClose: () => void;
   onTranscript?: (role: "user" | "assistant", text: string) => void;
+  sessionId?: string | null;
 }
 
-export function VoiceConversation({ onClose, onTranscript }: VoiceConversationProps) {
+export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceConversationProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "speaking" | "listening">("idle");
   const [transcript, setTranscript] = useState<string>("");
+  const savedMessagesRef = useRef<Set<string>>(new Set());
+  const sessionIdRef = useRef(sessionId);
+
+  // Keep sessionId ref in sync
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  // Save message to database
+  const saveMessageToDb = useCallback(async (role: "user" | "assistant", content: string) => {
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId) return;
+    
+    // Create a unique key to prevent duplicate saves
+    const messageKey = `${role}:${content.slice(0, 50)}`;
+    if (savedMessagesRef.current.has(messageKey)) return;
+    savedMessagesRef.current.add(messageKey);
+
+    try {
+      const { error } = await supabase.from("messages").insert({
+        session_id: currentSessionId,
+        role,
+        content,
+      });
+      if (error) {
+        console.error("Failed to save voice message:", error);
+      }
+    } catch (err) {
+      console.error("Error saving voice message:", err);
+    }
+  }, []);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -28,7 +60,7 @@ export function VoiceConversation({ onClose, onTranscript }: VoiceConversationPr
       console.log("Voice conversation disconnected");
       setVoiceStatus("idle");
     },
-    onMessage: (message) => {
+    onMessage: async (message) => {
       console.log("Voice message received:", message);
       
       // Handle different message types based on the message structure
@@ -39,6 +71,8 @@ export function VoiceConversation({ onClose, onTranscript }: VoiceConversationPr
         if (userText) {
           setTranscript(userText);
           onTranscript?.("user", userText);
+          // Save to database if we have a session
+          await saveMessageToDb("user", userText);
         }
       } else if (msg.type === "agent_response") {
         const event = msg.agent_response_event as Record<string, unknown> | undefined;
@@ -46,6 +80,8 @@ export function VoiceConversation({ onClose, onTranscript }: VoiceConversationPr
         if (agentText) {
           setTranscript(agentText);
           onTranscript?.("assistant", agentText);
+          // Save to database if we have a session
+          await saveMessageToDb("assistant", agentText);
         }
       }
     },

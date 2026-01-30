@@ -5,9 +5,10 @@ import { VoiceModeButton } from "./VoiceModeButton";
 interface VoiceChatProps {
   onTranscript?: (role: "user" | "assistant", text: string) => void;
   disabled?: boolean;
+  sessionId?: string | null;
 }
 
-export function VoiceChat({ onTranscript, disabled }: VoiceChatProps) {
+export function VoiceChat({ onTranscript, disabled, sessionId }: VoiceChatProps) {
   const [isVoiceModeActive, setIsVoiceModeActive] = useState(false);
 
   const handleOpenVoiceMode = () => {
@@ -26,6 +27,7 @@ export function VoiceChat({ onTranscript, disabled }: VoiceChatProps) {
         <VoiceConversation
           onClose={handleCloseVoiceMode}
           onTranscript={onTranscript}
+          sessionId={sessionId}
         />
       )}
     </>
