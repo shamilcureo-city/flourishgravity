@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatHistory } from "@/components/chat/ChatHistory";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useChatSessions } from "@/hooks/useChatSessions";
 
 interface Message {
   role: "user" | "assistant";
@@ -15,12 +17,12 @@ interface Message {
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 
 export default function Chat() {
-  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { loadSessionMessages, updateSessionTitle } = useChatSessions();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -30,14 +32,11 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
-  // Check auth and start session
+  // Start with a new session
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate("/login");
-        return;
-      }
+      if (!session) return;
 
       // Create a new chat session
       const { data, error } = await supabase
@@ -53,13 +52,11 @@ export default function Chat() {
       }
 
       setSessionId(data.id);
-      
-      // Get initial greeting from AI
       await getInitialGreeting();
     };
 
     init();
-  }, [navigate]);
+  }, []);
 
   const getInitialGreeting = async () => {
     try {
@@ -158,6 +155,12 @@ export default function Chat() {
       content,
     });
 
+    // Update session title based on first user message
+    if (messages.length <= 1) {
+      const title = content.slice(0, 50) + (content.length > 50 ? "..." : "");
+      await updateSessionTitle(sessionId, title);
+    }
+
     try {
       const response = await fetch(CHAT_URL, {
         method: "POST",
@@ -192,11 +195,11 @@ export default function Chat() {
     } catch (error) {
       console.error("Error sending message:", error);
       toast.error(error instanceof Error ? error.message : "Failed to send message");
-      setMessages(newMessages); // Remove the empty assistant message
+      setMessages(newMessages);
     } finally {
       setIsLoading(false);
     }
-  }, [messages, sessionId]);
+  }, [messages, sessionId, updateSessionTitle]);
 
   const startNewConversation = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -220,53 +223,73 @@ export default function Chat() {
     await getInitialGreeting();
   };
 
-  return (
-    <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard")}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="font-semibold text-foreground">Flourish Chat</h1>
-            <p className="text-xs text-muted-foreground">Your AI wellness companion</p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" onClick={startNewConversation}>
-          <Plus className="h-4 w-4 mr-1" />
-          New Chat
-        </Button>
-      </header>
+  const handleSelectSession = async (selectedSessionId: string) => {
+    if (selectedSessionId === sessionId) return;
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {isInitializing ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-              <p className="text-muted-foreground">Starting your session...</p>
+    setIsInitializing(true);
+    setSessionId(selectedSessionId);
+
+    try {
+      const loadedMessages = await loadSessionMessages(selectedSessionId);
+      setMessages(loadedMessages.map((m) => ({ role: m.role, content: m.content })));
+    } catch (error) {
+      console.error("Error loading session:", error);
+      toast.error("Failed to load conversation");
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  return (
+    <AppLayout>
+      <div className="flex flex-col h-[calc(100vh-3.5rem-4rem)] md:h-[calc(100vh-3.5rem)]">
+        {/* Header */}
+        <header className="flex items-center justify-between px-4 py-3 border-b bg-background">
+          <div className="flex items-center gap-3">
+            <ChatHistory
+              currentSessionId={sessionId}
+              onSelectSession={handleSelectSession}
+            />
+            <div>
+              <h1 className="font-semibold text-foreground">Flourish Chat</h1>
+              <p className="text-xs text-muted-foreground">Your AI wellness companion</p>
             </div>
           </div>
-        ) : (
-          messages.map((message, index) => (
-            <ChatMessage
-              key={index}
-              role={message.role}
-              content={message.content}
-              isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
-            />
-          ))
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          <Button variant="outline" size="sm" onClick={startNewConversation}>
+            <Plus className="h-4 w-4 mr-1" />
+            New
+          </Button>
+        </header>
 
-      {/* Input */}
-      <ChatInput
-        onSend={sendMessage}
-        disabled={isLoading || isInitializing}
-        isLoading={isLoading}
-      />
-    </div>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {isInitializing ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+                <p className="text-muted-foreground">Starting your session...</p>
+              </div>
+            </div>
+          ) : (
+            messages.map((message, index) => (
+              <ChatMessage
+                key={index}
+                role={message.role}
+                content={message.content}
+                isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
+              />
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <ChatInput
+          onSend={sendMessage}
+          disabled={isLoading || isInitializing}
+          isLoading={isLoading}
+        />
+      </div>
+    </AppLayout>
   );
 }
