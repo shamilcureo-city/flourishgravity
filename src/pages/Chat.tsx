@@ -5,6 +5,7 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatHistory } from "@/components/chat/ChatHistory";
 import { SuggestedPrompts } from "@/components/chat/SuggestedPrompts";
+import { VoiceChat } from "@/components/voice/VoiceChat";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -336,12 +337,25 @@ export default function Chat() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <ChatInput
-          onSend={sendMessage}
-          disabled={isLoading || isInitializing}
-          isLoading={isLoading}
-        />
+        {/* Input with Voice Mode */}
+        <div className="flex items-end gap-2 p-4 border-t bg-background">
+          <ChatInput
+            onSend={sendMessage}
+            disabled={isLoading || isInitializing}
+            isLoading={isLoading}
+          />
+          <VoiceChat
+            disabled={isLoading || isInitializing}
+            onTranscript={(role, text) => {
+              // Add voice transcripts to message history
+              if (role === "user") {
+                setMessages(prev => [...prev, { role: "user", content: text }]);
+              } else {
+                setMessages(prev => [...prev, { role: "assistant", content: text }]);
+              }
+            }}
+          />
+        </div>
       </div>
     </AppLayout>
   );
