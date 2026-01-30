@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useProfile } from "@/hooks/useProfile";
+import { useMoodEntries } from "@/hooks/useMoodEntries";
+import { WelcomeSection } from "@/components/dashboard/WelcomeSection";
+import { QuickActions } from "@/components/dashboard/QuickActions";
+import { MoodWidget } from "@/components/dashboard/MoodWidget";
+import { DailyQuote } from "@/components/dashboard/DailyQuote";
+import { MoodLogger } from "@/components/dashboard/MoodLogger";
 import { Loader2 } from "lucide-react";
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isMoodLoggerOpen, setIsMoodLoggerOpen] = useState(false);
+  
+  const { profile, loading: profileLoading } = useProfile();
+  const { todaysMood, logMood, loading: moodLoading } = useMoodEntries();
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -13,7 +24,7 @@ const Dashboard = () => {
       if (!session) {
         navigate("/login");
       } else {
-        setIsLoading(false);
+        setIsAuthLoading(false);
       }
     };
 
@@ -28,6 +39,8 @@ const Dashboard = () => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  const isLoading = isAuthLoading || profileLoading || moodLoading;
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -36,11 +49,32 @@ const Dashboard = () => {
     );
   }
 
+  const handleLogMood = async (score: number, notes?: string) => {
+    await logMood(score, notes);
+  };
+
   return (
     <div className="min-h-screen bg-wellness-radial">
-      <div className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2">Welcome to Flourish</h1>
-        <p className="text-muted-foreground">Your dashboard is coming soon. We'll add mood tracking, AI chat, and more!</p>
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <WelcomeSection displayName={profile?.display_name || null} />
+        
+        <div className="space-y-6">
+          <QuickActions onLogMood={() => setIsMoodLoggerOpen(true)} />
+          
+          <div className="grid md:grid-cols-2 gap-6">
+            <MoodWidget 
+              todaysMood={todaysMood} 
+              onLogMood={() => setIsMoodLoggerOpen(true)} 
+            />
+            <DailyQuote />
+          </div>
+        </div>
+
+        <MoodLogger
+          open={isMoodLoggerOpen}
+          onOpenChange={setIsMoodLoggerOpen}
+          onLogMood={handleLogMood}
+        />
       </div>
     </div>
   );
