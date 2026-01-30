@@ -1,47 +1,48 @@
 
-# Phase 2: Building the Functional Flourish Dashboard & AI Chat
 
-Now that authentication is working, it's time to bring Flourish to life with the core features. This phase will transform the placeholder dashboard into a fully functional wellness hub.
+# Phase 3: Insights, Analytics & Enhanced User Experience
+
+With the core features complete (dashboard, AI chat, mood logging), Phase 3 focuses on giving users actionable insights from their data and improving the overall experience.
 
 ---
 
 ## What We'll Build
 
-### 1. User Profiles Table (Database Setup)
-Store user preferences and onboarding data so the AI can personalize conversations.
+### 1. Mood Insights & Analytics Page
+A dedicated page showing users their emotional patterns over time:
+- **Weekly mood chart** with line/bar visualization
+- **Monthly mood calendar** with color-coded days
+- **Average mood score** with trend indicators (improving, stable, declining)
+- **Mood distribution** pie chart showing frequency of each mood level
+- **Streak tracking** for consecutive mood logging days
 
-**Data stored:**
-- Display name
-- Mental health goals (anxiety, mood, habits, relationships)
-- Preferred communication style
-- Onboarding completion status
+### 2. Personalized Onboarding Flow
+First-time user experience to personalize their journey:
+- **Welcome screen** introducing Flourish
+- **Goals selection** (managing anxiety, improving mood, building habits, better relationships)
+- **Communication style preference** (gentle encouragement, direct feedback, structured guidance)
+- **Display name** input for personalized greetings
+- Saves preferences to the profiles table
 
-### 2. Functional Dashboard
-Replace the "coming soon" message with a real wellness dashboard featuring:
-- **Welcome section** with user's name and daily greeting
-- **Quick actions** - Start AI Chat, Log Mood, View Insights
-- **Today's mood** (if logged) or prompt to log
-- **Recent activity** summary
-- **Daily motivational quote**
+### 3. Chat History Sidebar
+Allow users to revisit past conversations:
+- **Sidebar drawer** listing previous chat sessions
+- **Session titles** auto-generated from first message
+- **Load previous conversations** with full message history
+- **Delete old sessions** option
 
-### 3. AI Therapy Chat Interface
-The central feature - a full-screen chat with the evidence-based AI therapist:
-- Clean, calming chat interface
-- Message bubbles with typing indicators
-- Streaming AI responses for natural conversation feel
-- System prompts using CBT, DBT, and ACT techniques
-- Conversation history saved per session
+### 4. Enhanced Navigation
+Proper navigation between all app sections:
+- **Persistent sidebar** or **bottom navigation** for mobile
+- Quick access to Dashboard, Chat, Insights, and Settings
+- Visual indicator for current page
 
-### 4. Conversation Storage (Database)
-Save chat sessions so users can revisit past conversations:
-- Chat sessions table (title, created date, user)
-- Messages table (content, role, timestamp)
-
-### 5. Basic Mood Logging
-Quick mood check-in feature:
-- Emoji-based mood selection (1-5 scale)
-- Optional notes field
-- Store in database for future charting
+### 5. Settings Page
+User account management:
+- **Edit display name**
+- **Update goals and communication style**
+- **Delete account** option
+- **Sign out** button
 
 ---
 
@@ -49,84 +50,92 @@ Quick mood check-in feature:
 
 | Page/Component | Purpose |
 |----------------|---------|
-| `Dashboard.tsx` | Updated with widgets, quick actions, greeting |
-| `Chat.tsx` | Full-screen AI therapy conversation |
-| `MoodLogger.tsx` | Modal/page for logging daily mood |
-| `ChatMessage.tsx` | Individual message bubble component |
-| `QuickActions.tsx` | Dashboard widget with action buttons |
-| `MoodWidget.tsx` | Dashboard widget showing today's mood |
+| `Insights.tsx` | Mood charts, trends, and analytics |
+| `Onboarding.tsx` | First-time user setup flow |
+| `Settings.tsx` | Account and preferences management |
+| `ChatHistory.tsx` | Sidebar with past conversations |
+| `MoodChart.tsx` | Weekly/monthly mood visualization |
+| `MoodCalendar.tsx` | Color-coded monthly calendar view |
+| `AppSidebar.tsx` | Navigation sidebar component |
 
 ---
 
-## Database Tables
+## Visual Features
 
 ```text
-profiles
-├── id (uuid, references auth.users)
-├── display_name (text)
-├── goals (text array)
-├── communication_style (text)
-├── onboarding_completed (boolean)
-├── created_at / updated_at
-
-chat_sessions
-├── id (uuid)
-├── user_id (references profiles)
-├── title (text)
-├── created_at / updated_at
-
-messages
-├── id (uuid)
-├── session_id (references chat_sessions)
-├── role (enum: user/assistant)
-├── content (text)
-├── created_at
-
-mood_entries
-├── id (uuid)
-├── user_id (references profiles)
-├── mood_score (integer 1-5)
-├── notes (text, optional)
-├── created_at
+Insights Page Layout
++---------------------------+
+|  📊 Your Mood Insights    |
++---------------------------+
+|  [Weekly Chart - 7 days]  |
+|  ─────────────────────    |
+|  📈 Trend: Improving      |
+|  📅 Streak: 5 days        |
++---------------------------+
+|  [Monthly Calendar]       |
+|  Color-coded mood days    |
++---------------------------+
+|  [Mood Distribution]      |
+|  Pie chart breakdown      |
++---------------------------+
 ```
 
 ---
 
 ## Implementation Order
 
-1. **Database Setup** - Create profiles, chat_sessions, messages, and mood_entries tables with RLS policies
-2. **Profile Creation** - Auto-create profile on signup via database trigger
-3. **Dashboard Upgrade** - Build the functional dashboard with widgets
-4. **Chat Interface** - Create the AI therapy chat page with streaming responses
-5. **AI Integration** - Connect to Lovable AI with evidence-based therapy prompts
-6. **Mood Logging** - Add quick mood check-in functionality
-7. **Navigation** - Add sidebar or header nav between dashboard, chat, and mood pages
+1. **Onboarding Flow** - Create multi-step onboarding for new users with goals and preferences
+2. **App Navigation** - Add sidebar/bottom nav for seamless page switching
+3. **Insights Page** - Build mood analytics with charts using Recharts (already installed)
+4. **Chat History** - Add sidebar to load past conversations
+5. **Settings Page** - User account management
+6. **Polish** - Animations, loading states, empty states
 
 ---
 
 ## Technical Details
 
-### AI Therapy System Prompt
-The AI will be configured with a therapeutic persona using evidence-based techniques:
-- **CBT (Cognitive Behavioral Therapy)**: Identify thought patterns, challenge cognitive distortions
-- **DBT (Dialectical Behavior Therapy)**: Emotional regulation, distress tolerance
-- **ACT (Acceptance and Commitment Therapy)**: Mindfulness, values-based action
+### Chart Library
+Using **Recharts** (already in dependencies) for mood visualizations:
+- Line charts for weekly trends
+- Bar charts for mood distribution
+- Custom tooltips showing mood details
 
-### Security (RLS Policies)
-- Users can only read/write their own profiles
-- Users can only access their own chat sessions and messages
-- Users can only view/create their own mood entries
+### Onboarding Logic
+- Check `onboarding_completed` flag in profiles table
+- Redirect new users to onboarding after first login
+- Update profile with goals, communication style, and display name
+- Set `onboarding_completed = true` when finished
 
-### Streaming Responses
-AI responses will stream word-by-word for a natural, engaging conversation feel using an edge function connected to Lovable AI.
+### Chat History Loading
+- Query `chat_sessions` table ordered by `updated_at`
+- Load all `messages` for a session when selected
+- Auto-generate session titles from first user message
+
+### Navigation Approach
+- **Desktop**: Left sidebar with icons and labels
+- **Mobile**: Bottom navigation bar with icons
+- Use React Router for page transitions
+
+---
+
+## Database Usage
+
+No new tables needed - leveraging existing structure:
+- `profiles.goals` - Array of user's selected goals
+- `profiles.communication_style` - User preference
+- `profiles.onboarding_completed` - Boolean flag
+- `mood_entries` - For charts and calendar
+- `chat_sessions` + `messages` - For history
 
 ---
 
 ## What You'll Have After This Phase
 
-- A personalized dashboard that greets you by name
-- Working AI therapy chat with evidence-based responses
-- Ability to log and view your daily mood
-- All data securely stored and private to each user
-- Foundation ready for Phase 3 (charts, insights, trends)
+- Beautiful mood analytics showing weekly and monthly patterns
+- Personalized onboarding that captures user preferences
+- Access to all past therapy conversations
+- Easy navigation between all app features
+- Settings page for account management
+- A polished, complete wellness app ready for Phase 4 (advanced features)
 
