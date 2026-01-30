@@ -1,8 +1,9 @@
-import { LayoutDashboard, MessageCircle, BarChart3, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Settings, LogOut, Heart } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Chat", url: "/chat", icon: MessageCircle },
+  { title: "Exercises", url: "/exercises", icon: Heart },
   { title: "Insights", url: "/insights", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
@@ -76,7 +78,10 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <ThemeToggle />
+        </div>
         <Button
           variant="ghost"
           onClick={handleSignOut}

@@ -5,7 +5,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const THERAPY_SYSTEM_PROMPT = `You are Flourish, a compassionate AI wellness companion trained in evidence-based therapeutic techniques. Your role is to provide supportive, empathetic conversations that help users explore their thoughts and feelings.
+const buildSystemPrompt = (profile?: { 
+  display_name?: string; 
+  goals?: string[]; 
+  communication_style?: string;
+  recent_mood_avg?: number;
+}) => {
+  let basePrompt = `You are Flourish, a compassionate AI wellness companion trained in evidence-based therapeutic techniques. Your role is to provide supportive, empathetic conversations that help users explore their thoughts and feelings.
 
 ## Your Therapeutic Approach
 
@@ -43,9 +49,53 @@ You integrate techniques from:
 - You are NOT a replacement for professional mental health care
 - If someone expresses thoughts of self-harm or suicide, gently encourage them to reach out to a crisis helpline or mental health professional
 - Focus on the present moment and actionable coping strategies
-- Remember context from the conversation to provide continuity
+- Remember context from the conversation to provide continuity`;
 
-Begin each new conversation with a warm, gentle greeting and an open invitation to share.`;
+  // Personalize based on profile
+  if (profile) {
+    basePrompt += `\n\n## User Profile (Personalize your responses accordingly)`;
+    
+    if (profile.display_name) {
+      basePrompt += `\n- Name: ${profile.display_name} (use their name occasionally to create connection)`;
+    }
+    
+    if (profile.goals && profile.goals.length > 0) {
+      const goalMap: Record<string, string> = {
+        anxiety: "Managing Anxiety - emphasize breathing, grounding, and cognitive restructuring",
+        mood: "Improving Mood - focus on behavioral activation and positive psychology",
+        habits: "Building Healthy Habits - use motivational interviewing and habit stacking",
+        relationships: "Better Relationships - explore communication skills and boundaries",
+        sleep: "Better Sleep - discuss sleep hygiene and relaxation techniques",
+        stress: "Reducing Stress - practice stress management and time boundaries",
+      };
+      const goalDescriptions = profile.goals.map(g => goalMap[g] || g).join("\n  - ");
+      basePrompt += `\n- Goals:\n  - ${goalDescriptions}`;
+    }
+    
+    if (profile.communication_style) {
+      const styleMap: Record<string, string> = {
+        supportive: "Gentle & Supportive - be extra warm, validating, and encouraging. Use soft language.",
+        direct: "Direct & Practical - be clear and action-oriented. Focus on concrete steps and solutions.",
+        structured: "Structured & Guided - provide clear frameworks, step-by-step guidance, and organized approaches.",
+      };
+      basePrompt += `\n- Preferred Style: ${styleMap[profile.communication_style] || profile.communication_style}`;
+    }
+    
+    if (profile.recent_mood_avg !== undefined) {
+      if (profile.recent_mood_avg < 2.5) {
+        basePrompt += `\n- Recent Mood: Low (${profile.recent_mood_avg.toFixed(1)}/5) - be especially gentle and focus on small wins`;
+      } else if (profile.recent_mood_avg < 3.5) {
+        basePrompt += `\n- Recent Mood: Moderate (${profile.recent_mood_avg.toFixed(1)}/5) - explore what's helping and what's challenging`;
+      } else {
+        basePrompt += `\n- Recent Mood: Good (${profile.recent_mood_avg.toFixed(1)}/5) - build on positive momentum`;
+      }
+    }
+  }
+
+  basePrompt += `\n\nBegin each new conversation with a warm, gentle greeting and an open invitation to share.`;
+  
+  return basePrompt;
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -53,16 +103,19 @@ serve(async (req) => {
   }
 
   try {
-    const { messages, isNewSession } = await req.json();
+    const { messages, isNewSession, profile } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
+    // Build personalized system prompt
+    const systemPrompt = buildSystemPrompt(profile);
+
     // Build messages array with system prompt
     const allMessages = [
-      { role: "system", content: THERAPY_SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
       ...messages,
     ];
 
