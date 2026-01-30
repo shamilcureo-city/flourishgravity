@@ -1,108 +1,132 @@
 
+# Phase 2: Building the Functional Flourish Dashboard & AI Chat
 
-# Flourish - AI Mental Wellness Platform
-
-An evidence-based AI therapy and wellness tracking app that helps users improve their mental health through personalized conversations, mood tracking, and therapeutic exercises.
-
----
-
-## 🎯 Core Features
-
-### 1. User Authentication & Onboarding
-- **Sign up/Login** with email and password
-- **Personalized onboarding flow** asking about:
-  - Current mental health goals (reduce anxiety, improve mood, build habits, etc.)
-  - Preferred communication style
-  - Any specific areas of focus
-- **User profiles** storing preferences and wellness goals
-
-### 2. AI Therapy Chat (Central Feature)
-- **Evidence-based AI therapist** using CBT, DBT, and ACT techniques
-- Conversational interface with a warm, supportive tone
-- **Session-based conversations** that users can revisit
-- AI suggests appropriate exercises based on what users share (breathing, journaling prompts, reframing exercises)
-- **Conversation history** saved so AI remembers context across sessions
-
-### 3. Mood & Wellness Tracker
-- **Daily check-ins** with mood scale (1-10 or emoji-based)
-- Track additional metrics: sleep quality, energy levels, anxiety levels
-- **Visual charts** showing mood trends over time (weekly/monthly views)
-- **Pattern insights** - AI identifies correlations (e.g., "Your mood tends to be better after journaling")
-
-### 4. Dashboard Home
-- **Today's overview**: mood, active goals, streak count
-- **Quick actions**: Start chat, Log mood, View insights
-- **Personalized suggestions** based on recent activity
-- **Motivational quote** or daily affirmation
+Now that authentication is working, it's time to bring Flourish to life with the core features. This phase will transform the placeholder dashboard into a fully functional wellness hub.
 
 ---
 
-## 💎 Premium Features (Freemium Model)
+## What We'll Build
 
-### Free Tier Includes:
-- 5 AI therapy messages per day
-- Basic mood tracking
-- Access to dashboard and trends
+### 1. User Profiles Table (Database Setup)
+Store user preferences and onboarding data so the AI can personalize conversations.
 
-### Premium Tier Unlocks:
-- Unlimited AI therapy conversations
-- Advanced insights and pattern analysis
-- Priority response time
-- Export data/reports
-- Access to guided exercise library
+**Data stored:**
+- Display name
+- Mental health goals (anxiety, mood, habits, relationships)
+- Preferred communication style
+- Onboarding completion status
 
----
+### 2. Functional Dashboard
+Replace the "coming soon" message with a real wellness dashboard featuring:
+- **Welcome section** with user's name and daily greeting
+- **Quick actions** - Start AI Chat, Log Mood, View Insights
+- **Today's mood** (if logged) or prompt to log
+- **Recent activity** summary
+- **Daily motivational quote**
 
-## 🎨 Design Direction
+### 3. AI Therapy Chat Interface
+The central feature - a full-screen chat with the evidence-based AI therapist:
+- Clean, calming chat interface
+- Message bubbles with typing indicators
+- Streaming AI responses for natural conversation feel
+- System prompts using CBT, DBT, and ACT techniques
+- Conversation history saved per session
 
-- **Color palette**: Soft blues, gentle greens, warm neutrals - calming and therapeutic
-- **Typography**: Clean, readable fonts with generous spacing
-- **UI elements**: Rounded corners, subtle shadows, smooth transitions
-- **Animations**: Gentle, breathing-like animations for loading states
-- **Overall feel**: Like entering a peaceful wellness sanctuary
+### 4. Conversation Storage (Database)
+Save chat sessions so users can revisit past conversations:
+- Chat sessions table (title, created date, user)
+- Messages table (content, role, timestamp)
 
----
-
-## 📱 Key Pages/Screens
-
-1. **Landing Page** - App benefits, testimonials, signup CTA
-2. **Onboarding Flow** - 3-4 step personalization wizard
-3. **Dashboard/Home** - Central hub with daily overview
-4. **AI Chat** - Full-screen therapeutic conversation interface
-5. **Mood Tracker** - Log entries and view historical data
-6. **Insights** - Charts, patterns, and AI-generated observations
-7. **Profile/Settings** - Account management, preferences, subscription
-
----
-
-## 🔧 Technical Foundation
-
-- **User authentication** with secure account management
-- **Database** for storing user profiles, conversations, and mood entries
-- **AI integration** for therapeutic conversations using Lovable AI
-- **Real-time chat** with streaming responses for natural conversation feel
+### 5. Basic Mood Logging
+Quick mood check-in feature:
+- Emoji-based mood selection (1-5 scale)
+- Optional notes field
+- Store in database for future charting
 
 ---
 
-## 🚀 Development Phases
+## New Pages & Components
 
-**Phase 1 - Foundation**
-- User authentication and onboarding
-- Dashboard with calm, soothing design
-- Basic profile setup
+| Page/Component | Purpose |
+|----------------|---------|
+| `Dashboard.tsx` | Updated with widgets, quick actions, greeting |
+| `Chat.tsx` | Full-screen AI therapy conversation |
+| `MoodLogger.tsx` | Modal/page for logging daily mood |
+| `ChatMessage.tsx` | Individual message bubble component |
+| `QuickActions.tsx` | Dashboard widget with action buttons |
+| `MoodWidget.tsx` | Dashboard widget showing today's mood |
 
-**Phase 2 - Core AI Chat**
-- AI therapy conversation interface
-- Evidence-based system prompts (CBT/DBT techniques)
-- Conversation history and session management
+---
 
-**Phase 3 - Mood Tracking**
-- Daily mood logging interface
-- Historical data visualization
-- Basic trend charts
+## Database Tables
 
-**Phase 4 - Insights & Polish**
-- AI-powered pattern insights
-- Premium feature gates
-- Final design polish and animations
+```text
+profiles
+├── id (uuid, references auth.users)
+├── display_name (text)
+├── goals (text array)
+├── communication_style (text)
+├── onboarding_completed (boolean)
+├── created_at / updated_at
+
+chat_sessions
+├── id (uuid)
+├── user_id (references profiles)
+├── title (text)
+├── created_at / updated_at
+
+messages
+├── id (uuid)
+├── session_id (references chat_sessions)
+├── role (enum: user/assistant)
+├── content (text)
+├── created_at
+
+mood_entries
+├── id (uuid)
+├── user_id (references profiles)
+├── mood_score (integer 1-5)
+├── notes (text, optional)
+├── created_at
+```
+
+---
+
+## Implementation Order
+
+1. **Database Setup** - Create profiles, chat_sessions, messages, and mood_entries tables with RLS policies
+2. **Profile Creation** - Auto-create profile on signup via database trigger
+3. **Dashboard Upgrade** - Build the functional dashboard with widgets
+4. **Chat Interface** - Create the AI therapy chat page with streaming responses
+5. **AI Integration** - Connect to Lovable AI with evidence-based therapy prompts
+6. **Mood Logging** - Add quick mood check-in functionality
+7. **Navigation** - Add sidebar or header nav between dashboard, chat, and mood pages
+
+---
+
+## Technical Details
+
+### AI Therapy System Prompt
+The AI will be configured with a therapeutic persona using evidence-based techniques:
+- **CBT (Cognitive Behavioral Therapy)**: Identify thought patterns, challenge cognitive distortions
+- **DBT (Dialectical Behavior Therapy)**: Emotional regulation, distress tolerance
+- **ACT (Acceptance and Commitment Therapy)**: Mindfulness, values-based action
+
+### Security (RLS Policies)
+- Users can only read/write their own profiles
+- Users can only access their own chat sessions and messages
+- Users can only view/create their own mood entries
+
+### Streaming Responses
+AI responses will stream word-by-word for a natural, engaging conversation feel using an edge function connected to Lovable AI.
+
+---
+
+## What You'll Have After This Phase
+
+- A personalized dashboard that greets you by name
+- Working AI therapy chat with evidence-based responses
+- Ability to log and view your daily mood
+- All data securely stored and private to each user
+- Foundation ready for Phase 3 (charts, insights, trends)
 
