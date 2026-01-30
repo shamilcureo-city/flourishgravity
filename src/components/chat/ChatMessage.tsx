@@ -1,20 +1,22 @@
 import { cn } from "@/lib/utils";
 import { Bot, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { MessageActions } from "./MessageActions";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  messageIndex?: number;
 }
 
-export function ChatMessage({ role, content, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ role, content, isStreaming, messageIndex = 0 }: ChatMessageProps) {
   const isAssistant = role === "assistant";
 
   return (
     <div
       className={cn(
-        "flex gap-3 p-4 rounded-2xl max-w-[85%]",
+        "group flex gap-3 p-4 rounded-2xl max-w-[85%]",
         isAssistant
           ? "bg-muted/50 self-start"
           : "bg-primary text-primary-foreground self-end ml-auto"
@@ -31,6 +33,9 @@ export function ChatMessage({ role, content, isStreaming }: ChatMessageProps) {
             <ReactMarkdown>{content}</ReactMarkdown>
             {isStreaming && (
               <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-1" />
+            )}
+            {!isStreaming && content && (
+              <MessageActions content={content} messageIndex={messageIndex} />
             )}
           </>
         ) : (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2, Save, LogOut, User, Target, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DataExport } from "@/components/settings/DataExport";
 
 const GOALS = [
   { id: "anxiety", label: "Managing Anxiety", icon: "🧘" },
@@ -35,13 +36,13 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Update local state when profile loads
-  useState(() => {
+  useEffect(() => {
     if (profile) {
       setDisplayName(profile.display_name || "");
       setSelectedGoals(profile.goals || []);
       setCommunicationStyle(profile.communication_style || "supportive");
     }
-  });
+  }, [profile]);
 
   const toggleGoal = (goalId: string) => {
     setSelectedGoals((prev) =>
@@ -190,6 +191,9 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Data Export Card */}
+        <DataExport />
 
         {/* Actions */}
         <div className="flex flex-col gap-3">

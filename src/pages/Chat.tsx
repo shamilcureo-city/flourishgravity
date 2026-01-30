@@ -4,10 +4,12 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatHistory } from "@/components/chat/ChatHistory";
+import { SuggestedPrompts } from "@/components/chat/SuggestedPrompts";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useChatSessions } from "@/hooks/useChatSessions";
+import { useProfile } from "@/hooks/useProfile";
 
 interface Message {
   role: "user" | "assistant";
@@ -23,6 +25,34 @@ export default function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { loadSessionMessages, updateSessionTitle } = useChatSessions();
+  const { profile } = useProfile();
+
+  // Build profile data for AI personalization
+  const getProfileData = useCallback(async () => {
+    if (!profile) return undefined;
+    
+    // Get recent mood average
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return undefined;
+    
+    const { data: recentMoods } = await supabase
+      .from("mood_entries")
+      .select("mood_score")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(7);
+    
+    const recentMoodAvg = recentMoods && recentMoods.length > 0
+      ? recentMoods.reduce((sum, m) => sum + m.mood_score, 0) / recentMoods.length
+      : undefined;
+
+    return {
+      display_name: profile.display_name || undefined,
+      goals: profile.goals || undefined,
+      communication_style: profile.communication_style || undefined,
+      recent_mood_avg: recentMoodAvg,
+    };
+  }, [profile]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,13 +90,14 @@ export default function Chat() {
 
   const getInitialGreeting = async () => {
     try {
+      const profileData = await getProfileData();
       const response = await fetch(CHAT_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({ messages: [], isNewSession: true }),
+        body: JSON.stringify({ messages: [], isNewSession: true, profile: profileData }),
       });
 
       if (!response.ok) {
@@ -162,6 +193,7 @@ export default function Chat() {
     }
 
     try {
+      const profileData = await getProfileData();
       const response = await fetch(CHAT_URL, {
         method: "POST",
         headers: {
@@ -170,6 +202,7 @@ export default function Chat() {
         },
         body: JSON.stringify({
           messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+          profile: profileData,
         }),
       });
 
@@ -199,7 +232,11 @@ export default function Chat() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, sessionId, updateSessionTitle]);
+  }, [messages, sessionId, updateSessionTitle, getProfileData]);
+
+  const handleSuggestedPrompt = (prompt: string) => {
+    sendMessage(prompt);
+  };
 
   const startNewConversation = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -270,6 +307,21 @@ export default function Chat() {
                 <p className="text-muted-foreground">Starting your session...</p>
               </div>
             </div>
+          ) : messages.length <= 1 ? (
+            <div className="space-y-6">
+              {messages.map((message, index) => (
+                <ChatMessage
+                  key={index}
+                  role={message.role}
+                  content={message.content}
+                  isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
+                  messageIndex={index}
+                />
+              ))}
+              {!isLoading && (
+                <SuggestedPrompts onSelect={handleSuggestedPrompt} disabled={isLoading} />
+              )}
+            </div>
           ) : (
             messages.map((message, index) => (
               <ChatMessage
@@ -277,6 +329,7 @@ export default function Chat() {
                 role={message.role}
                 content={message.content}
                 isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
+                messageIndex={index}
               />
             ))
           )}
