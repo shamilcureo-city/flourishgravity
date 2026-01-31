@@ -221,13 +221,24 @@ serve(async (req) => {
 
     const tokenData = tokenResponse.ok ? await tokenResponse.json() : null;
     const signedUrlData = signedUrlResponse.ok ? await signedUrlResponse.json() : null;
-    
-    console.log("Successfully obtained conversation credentials");
+
+    // ElevenLabs has returned different field names over time; handle common variants.
+    const signedUrl =
+      (signedUrlData as Record<string, unknown> | null)?.signed_url ??
+      (signedUrlData as Record<string, unknown> | null)?.signedUrl ??
+      (signedUrlData as Record<string, unknown> | null)?.url ??
+      null;
+
+    console.log(
+      "Successfully obtained conversation credentials (signedUrl:",
+      signedUrl ? "yes" : "no",
+      ")"
+    );
 
     return new Response(
       JSON.stringify({ 
         token: tokenData?.token || null,
-        signedUrl: signedUrlData?.signed_url || null,
+        signedUrl: signedUrl,
         context: conversationContext || null,
         hasContext
       }),
