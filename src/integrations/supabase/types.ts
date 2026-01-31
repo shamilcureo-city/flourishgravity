@@ -17,21 +17,30 @@ export type Database = {
       chat_sessions: {
         Row: {
           created_at: string
+          has_voice_messages: boolean | null
           id: string
+          last_message_preview: string | null
+          summary: string | null
           title: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          has_voice_messages?: boolean | null
           id?: string
+          last_message_preview?: string | null
+          summary?: string | null
           title?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
+          has_voice_messages?: boolean | null
           id?: string
+          last_message_preview?: string | null
+          summary?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string
