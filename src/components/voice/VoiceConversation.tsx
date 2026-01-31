@@ -3,6 +3,7 @@ import { useConversation } from "@elevenlabs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { VoiceIndicator } from "./VoiceIndicator";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { X, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,18 +13,31 @@ interface VoiceConversationProps {
   sessionId?: string | null;
 }
 
+interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+}
+
 export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceConversationProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "speaking" | "listening">("idle");
   const [transcript, setTranscript] = useState<string>("");
+  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
   const savedMessagesRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef(sessionId);
+  const historyEndRef = useRef<HTMLDivElement>(null);
 
   // Keep sessionId ref in sync
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  // Auto-scroll conversation history
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [conversationHistory]);
 
   // Save message to database
   const saveMessageToDb = useCallback(async (role: "user" | "assistant", content: string) => {
@@ -49,6 +63,12 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     }
   }, []);
 
+  // Add message to conversation history
+  const addToHistory = useCallback((role: "user" | "assistant", content: string) => {
+    const id = `${Date.now()}-${role}`;
+    setConversationHistory(prev => [...prev, { id, role, content }]);
+  }, []);
+
   const conversation = useConversation({
     onConnect: () => {
       console.log("Voice conversation connected");
@@ -70,8 +90,8 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         const userText = event?.user_transcript as string | undefined;
         if (userText) {
           setTranscript(userText);
+          addToHistory("user", userText);
           onTranscript?.("user", userText);
-          // Save to database if we have a session
           await saveMessageToDb("user", userText);
         }
       } else if (msg.type === "agent_response") {
@@ -79,8 +99,8 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         const agentText = event?.agent_response as string | undefined;
         if (agentText) {
           setTranscript(agentText);
+          addToHistory("assistant", agentText);
           onTranscript?.("assistant", agentText);
-          // Save to database if we have a session
           await saveMessageToDb("assistant", agentText);
         }
       }
@@ -191,8 +211,8 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         <X className="h-6 w-6" />
       </Button>
 
-      {/* Voice indicator */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-8">
+      {/* Voice indicator and transcript area */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-6 w-full max-w-md">
         <h2 className="text-2xl font-semibold text-foreground">Voice Mode</h2>
         
         <VoiceIndicator
@@ -201,18 +221,43 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
           outputLevel={conversation.getOutputVolume?.() || 0}
         />
 
-        {/* Live transcript */}
-        {transcript && (
-          <div className="max-w-md text-center">
-            <p className="text-sm text-muted-foreground mb-1">
-              {voiceStatus === "speaking" ? "AI says:" : "You said:"}
+        {/* Conversation history */}
+        {conversationHistory.length > 0 && (
+          <ScrollArea className="w-full max-h-48 border rounded-lg p-3 bg-muted/30">
+            <div className="space-y-3">
+              {conversationHistory.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
+                >
+                  <span className="text-xs text-muted-foreground mb-0.5">
+                    {msg.role === "user" ? "You" : "Flourish"}
+                  </span>
+                  <p className={`text-sm px-3 py-2 rounded-lg max-w-[85%] ${
+                    msg.role === "user" 
+                      ? "bg-primary text-primary-foreground" 
+                      : "bg-secondary text-secondary-foreground"
+                  }`}>
+                    {msg.content}
+                  </p>
+                </div>
+              ))}
+              <div ref={historyEndRef} />
+            </div>
+          </ScrollArea>
+        )}
+
+        {/* Live transcript indicator */}
+        {transcript && voiceStatus !== "idle" && (
+          <div className="text-center animate-pulse">
+            <p className="text-xs text-muted-foreground mb-1">
+              {voiceStatus === "speaking" ? "AI is speaking..." : "Listening..."}
             </p>
-            <p className="text-foreground">{transcript}</p>
           </div>
         )}
 
         {/* Hint text */}
-        {voiceStatus === "listening" && (
+        {voiceStatus === "listening" && conversationHistory.length === 0 && (
           <p className="text-sm text-muted-foreground">
             Speak naturally — I'll respond when you pause
           </p>

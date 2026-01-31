@@ -1,5 +1,6 @@
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
-import { useChatSessions, ChatSession } from "@/hooks/useChatSessions";
+import { useChatSessions } from "@/hooks/useChatSessions";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,10 +11,19 @@ import { cn } from "@/lib/utils";
 interface ChatHistoryProps {
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
+  onRefreshRequest?: () => void;
 }
 
-export function ChatHistory({ currentSessionId, onSelectSession }: ChatHistoryProps) {
-  const { sessions, loading, deleteSession } = useChatSessions();
+export function ChatHistory({ currentSessionId, onSelectSession, onRefreshRequest }: ChatHistoryProps) {
+  const [open, setOpen] = useState(false);
+  const { sessions, loading, deleteSession, fetchSessions } = useChatSessions();
+
+  // Refresh sessions when sheet opens
+  useEffect(() => {
+    if (open) {
+      fetchSessions();
+    }
+  }, [open, fetchSessions]);
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
@@ -24,6 +34,11 @@ export function ChatHistory({ currentSessionId, onSelectSession }: ChatHistoryPr
       console.error("Error deleting session:", error);
       toast.error("Failed to delete conversation");
     }
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    onSelectSession(sessionId);
+    setOpen(false); // Close sheet after selection
   };
 
   const formatSessionDate = (dateStr: string) => {
@@ -38,7 +53,7 @@ export function ChatHistory({ currentSessionId, onSelectSession }: ChatHistoryPr
   };
 
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon" className="shrink-0">
           <History className="h-5 w-5" />
@@ -67,7 +82,7 @@ export function ChatHistory({ currentSessionId, onSelectSession }: ChatHistoryPr
               {sessions.map((session) => (
                 <button
                   key={session.id}
-                  onClick={() => onSelectSession(session.id)}
+                  onClick={() => handleSelectSession(session.id)}
                   className={cn(
                     "w-full text-left p-3 rounded-lg transition-colors group",
                     currentSessionId === session.id
