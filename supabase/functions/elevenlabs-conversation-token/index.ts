@@ -184,35 +184,50 @@ serve(async (req) => {
       }
     }
 
-    // Get conversation token from ElevenLabs
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${ELEVENLABS_AGENT_ID}`,
-      {
-        method: "GET",
-        headers: {
-          "xi-api-key": ELEVENLABS_API_KEY,
-        },
-      }
-    );
+    // Get both conversation token AND signed URL from ElevenLabs
+    // This gives us fallback options if WebRTC fails
+    const [tokenResponse, signedUrlResponse] = await Promise.all([
+      fetch(
+        `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${ELEVENLABS_AGENT_ID}`,
+        {
+          method: "GET",
+          headers: {
+            "xi-api-key": ELEVENLABS_API_KEY,
+          },
+        }
+      ),
+      fetch(
+        `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${ELEVENLABS_AGENT_ID}`,
+        {
+          method: "GET",
+          headers: {
+            "xi-api-key": ELEVENLABS_API_KEY,
+          },
+        }
+      )
+    ]);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("ElevenLabs API error:", response.status, errorText);
+    if (!tokenResponse.ok && !signedUrlResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error("ElevenLabs API error:", tokenResponse.status, errorText);
       return new Response(
         JSON.stringify({ 
-          error: "Failed to get conversation token",
+          error: "Failed to get conversation credentials",
           details: errorText 
         }),
-        { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: tokenResponse.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const data = await response.json();
-    console.log("Successfully obtained conversation token");
+    const tokenData = tokenResponse.ok ? await tokenResponse.json() : null;
+    const signedUrlData = signedUrlResponse.ok ? await signedUrlResponse.json() : null;
+    
+    console.log("Successfully obtained conversation credentials");
 
     return new Response(
       JSON.stringify({ 
-        token: data.token,
+        token: tokenData?.token || null,
+        signedUrl: signedUrlData?.signed_url || null,
         context: conversationContext || null,
         hasContext
       }),
