@@ -1,224 +1,286 @@
 
+# Complete Voice + Chat Unification Plan
 
-# Improve Chat History, Voice Sync, and Unified Experience
+## Current Problems
 
-## Current Issues Identified
+After analyzing your codebase and database, I've identified these issues:
 
-After analyzing the codebase and database, I've identified the following gaps:
+### Problem 1: Voice Messages Not Appearing in Chat
+The `VoiceConversation.tsx` component saves messages to the database, BUT the message events from ElevenLabs may not be firing correctly. The code expects specific event types (`user_transcript` and `agent_response`) but ElevenLabs may send different event structures depending on agent configuration. The app needs to be robust and handle multiple event formats.
 
-### Issue 1: Chat History Exists but Not Working Properly
-- The `ChatHistory` component and `handleSelectSession` function exist
-- When selecting a session, messages ARE being loaded from the database
-- **Problem**: The session list may not be refreshing after new sessions are created, and the sheet needs to close after selection
+### Problem 2: No Past Conversation Context for Voice Mode
+When you open voice mode, the ElevenLabs agent starts completely fresh. It has no knowledge of what was discussed in the text chat or previous voice sessions. The agent needs to receive conversation history as context.
 
-### Issue 2: Voice Transcripts Not Syncing to Chat UI in Real-Time
-- Voice messages ARE being saved to the database (the `saveMessageToDb` function exists)
-- The `onTranscript` callback IS updating the UI state
-- **Problem**: When voice mode is open (fullscreen overlay), the main chat UI is hidden - there's no visual continuity
-- **Problem**: Voice transcripts appear in the overlay but don't show the conversation flow naturally
-
-### Issue 3: Missing Real-Time Database Sync
-- Currently using one-way data flow (save to DB, but no live updates FROM DB)
-- If voice messages are saved, they won't appear in text chat until page refresh
-- Need Supabase Realtime subscription to sync messages across sessions
+### Problem 3: Chat History Navigation Works but Could Be Smoother
+The history panel exists but doesn't show message previews or indicate which sessions contain voice messages.
 
 ---
 
-## Solution Plan
+## Solution Overview
 
-### Part 1: Fix Chat History Selection Flow
-
-**File: `src/components/chat/ChatHistory.tsx`**
-- Add Sheet controlled state to close after selecting a session
-- Call `fetchSessions` to refresh the list when sheet opens
-
-**File: `src/pages/Chat.tsx`**  
-- Call `fetchSessions` after creating new sessions
-- Ensure proper loading state when switching sessions
-
----
-
-### Part 2: Add Real-Time Message Sync with Supabase Realtime
-
-**Database Change:**
-- Enable realtime on the `messages` table:
-  ```sql
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
-  ```
-
-**File: `src/hooks/useChatSessions.ts`**
-- Add a `subscribeToMessages` function that uses Supabase Realtime
-- When a new message is inserted (from voice or text), it broadcasts to all listeners
-
-**File: `src/pages/Chat.tsx`**
-- Subscribe to realtime messages for the current session
-- When voice inserts a message to DB, the chat UI receives it automatically
-- This keeps text and voice in perfect sync
+```text
++------------------+     +-------------------+     +------------------+
+|   Text Chat UI   |<--->|   Supabase DB     |<--->|   Voice Mode     |
+|   (Chat.tsx)     |     |   (messages)      |     | (VoiceConv.tsx)  |
++------------------+     +-------------------+     +------------------+
+        |                        ^                        |
+        |  Realtime Sync         |                        |
+        +------------------------+------------------------+
+                                 |
+                          +------+-------+
+                          | Edge Function|
+                          | + Context    |
+                          +------+-------+
+                                 |
+                          +------+-------+
+                          | ElevenLabs   |
+                          | Agent        |
+                          +--------------+
+```
 
 ---
 
-### Part 3: Improve Voice Mode UX with Conversation Flow
+## Implementation Plan
+
+### Part 1: Fix Voice Message Capture (Robust Event Handling)
 
 **File: `src/components/voice/VoiceConversation.tsx`**
-- Add a scrollable transcript list showing the full voice conversation history
-- Show messages as they happen with user/assistant styling
-- Keep the current live transcript indicator for the latest message
+
+The current code checks for specific event types, but ElevenLabs may send events differently. Update the `onMessage` handler to:
+
+1. Log all incoming messages for debugging
+2. Check multiple possible event structures
+3. Handle both finalized transcripts AND partial/tentative transcripts as fallback
+4. Only save finalized transcripts to avoid duplicate messages
+
+Changes:
+- Add more robust event parsing that checks for:
+  - `message.type === "user_transcript"` (current)
+  - `message.user_transcription_event` (direct access)
+  - `message.text` (alternative format)
+  - Fallback: capture from `isSpeaking` state changes
+- Add console logging to debug what events are actually received
+- Store the last user/assistant text to detect when conversation turns end
+
+### Part 2: Inject Conversation Context to Voice Agent
+
+**File: `supabase/functions/elevenlabs-conversation-token/index.ts`**
+
+Currently, the edge function just fetches a token. Enhance it to:
+
+1. Accept the current `sessionId` in the request body
+2. Load recent messages from that session (last 10-20 messages)
+3. Generate a brief AI summary of the conversation using Lovable AI
+4. Pass this context to ElevenLabs when getting the token
+
+ElevenLabs supports passing custom context via the `conversation_config_override` parameter when starting a session. We can use this to inject:
+- A summary of the conversation so far
+- The user's last few messages
+- Key topics discussed
+
+**File: `src/components/voice/VoiceConversation.tsx`**
+
+Update `startConversation` to:
+1. Pass the `sessionId` to the edge function
+2. Receive back the token PLUS any context/overrides
+3. Use `overrides` parameter when calling `startSession` to inject the conversation context
+
+### Part 3: Create Conversation Summary Helper
+
+**File: `supabase/functions/generate-summary/index.ts` (NEW)**
+
+Create a new edge function that:
+1. Takes a session_id
+2. Loads the messages
+3. Uses Lovable AI to generate a brief summary (2-3 sentences)
+4. Returns the summary
+
+This summary can be:
+- Stored in the `chat_sessions` table (add a `summary` column)
+- Injected into the ElevenLabs agent's first message prompt
+
+### Part 4: Enhance Chat History with Previews
+
+**File: `src/hooks/useChatSessions.ts`**
+
+Update to:
+1. Fetch the last message content for each session (as preview)
+2. Check if session contains any voice messages (for badge)
+
+**File: `src/components/chat/ChatHistory.tsx`**
+
+Update to:
+1. Show message preview snippet under session title
+2. Add microphone icon for sessions with voice messages
 
 ---
 
-### Part 4: Add Session Continuation Feature
+## Database Changes
 
-**File: `src/pages/Chat.tsx`**
-- When app loads, optionally resume the most recent session instead of always creating new
-- Add a visual indicator showing which session is active
-
----
-
-## Detailed File Changes
-
-### 1. Database Migration (Enable Realtime)
-
+Add columns to `chat_sessions` table:
 ```sql
--- Enable realtime for messages table
-ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
-```
-
-### 2. `src/hooks/useChatSessions.ts`
-
-Add a new hook for real-time message subscription:
-
-```typescript
-const subscribeToSessionMessages = (
-  sessionId: string, 
-  onNewMessage: (message: Message) => void
-) => {
-  const channel = supabase
-    .channel(`session-${sessionId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `session_id=eq.${sessionId}`,
-      },
-      (payload) => {
-        onNewMessage(payload.new as Message);
-      }
-    )
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-};
-```
-
-### 3. `src/pages/Chat.tsx`
-
-- Add realtime subscription for current session
-- When voice mode saves a message, the subscription picks it up
-- Prevent duplicate messages (check if already in state by ID or content)
-- Close sheet after session selection
-
-```typescript
-// Subscribe to realtime messages
-useEffect(() => {
-  if (!sessionId) return;
-  
-  const channel = supabase
-    .channel(`messages-${sessionId}`)
-    .on('postgres_changes', { 
-      event: 'INSERT', 
-      schema: 'public', 
-      table: 'messages',
-      filter: `session_id=eq.${sessionId}` 
-    }, (payload) => {
-      const newMsg = payload.new as Message;
-      // Add to UI if not already present
-      setMessages(prev => {
-        if (prev.some(m => m.content === newMsg.content && m.role === newMsg.role)) {
-          return prev;
-        }
-        return [...prev, { role: newMsg.role, content: newMsg.content }];
-      });
-    })
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, [sessionId]);
-```
-
-### 4. `src/components/chat/ChatHistory.tsx`
-
-- Add controlled state to close sheet after selection
-- Refresh sessions when opening
-
-```typescript
-const [open, setOpen] = useState(false);
-
-const handleSelect = (sessionId: string) => {
-  onSelectSession(sessionId);
-  setOpen(false); // Close the sheet
-};
-
-// In Sheet component:
-<Sheet open={open} onOpenChange={setOpen}>
-```
-
-### 5. `src/components/voice/VoiceConversation.tsx`
-
-Add conversation history display:
-
-```typescript
-const [conversationHistory, setConversationHistory] = useState<
-  Array<{role: "user" | "assistant", content: string}>
->([]);
-
-// When receiving messages:
-setConversationHistory(prev => [...prev, { role, content: text }]);
-
-// In render - add scrollable message list:
-<ScrollArea className="max-h-48 mb-4">
-  {conversationHistory.map((msg, i) => (
-    <div key={i} className={msg.role === "user" ? "text-right" : "text-left"}>
-      <span className="text-xs text-muted-foreground">
-        {msg.role === "user" ? "You" : "Flourish"}:
-      </span>
-      <p className="text-sm">{msg.content}</p>
-    </div>
-  ))}
-</ScrollArea>
+ALTER TABLE public.chat_sessions 
+ADD COLUMN IF NOT EXISTS summary text,
+ADD COLUMN IF NOT EXISTS has_voice_messages boolean DEFAULT false;
 ```
 
 ---
 
-## Additional Improvement Ideas
+## Detailed Technical Implementation
 
-### Immediate Improvements
-1. **Session preview in history** - Show last message snippet in chat history list
-2. **Voice badge indicator** - Mark sessions that contain voice messages with a microphone icon
-3. **Search chat history** - Add search functionality to find past conversations
-4. **Export conversation** - Allow users to download conversation transcripts
+### 1. Enhanced Voice Message Handler
 
-### Advanced Features
-5. **Continue in voice** - "Continue this conversation in voice mode" button that injects text context
-6. **AI-generated titles** - Auto-generate session titles from conversation content
-7. **Mood tagging** - Tag sessions with the user's mood at that time
-8. **Pin important sessions** - Let users pin favorite conversations
-9. **Conversation summary** - AI-generated summary of each session for quick review
+```typescript
+// VoiceConversation.tsx - onMessage handler
+onMessage: async (message) => {
+  console.log("Voice message received:", JSON.stringify(message, null, 2));
+  
+  // Try multiple ways to extract transcript
+  let userText: string | undefined;
+  let agentText: string | undefined;
+  
+  const msg = message as Record<string, unknown>;
+  
+  // Method 1: Standard event structure
+  if (msg.type === "user_transcript") {
+    const event = msg.user_transcription_event as Record<string, unknown>;
+    userText = event?.user_transcript as string;
+  } else if (msg.type === "agent_response") {
+    const event = msg.agent_response_event as Record<string, unknown>;
+    agentText = event?.agent_response as string;
+  }
+  
+  // Method 2: Alternative structures (some agents use these)
+  if (!userText && msg.user_transcript) {
+    userText = msg.user_transcript as string;
+  }
+  if (!agentText && msg.agent_response) {
+    agentText = msg.agent_response as string;
+  }
+  
+  // Method 3: Check for text field (some WebRTC implementations)
+  if (!userText && !agentText && msg.text && msg.role) {
+    if (msg.role === "user") userText = msg.text as string;
+    if (msg.role === "assistant") agentText = msg.text as string;
+  }
+  
+  // Save if we got something
+  if (userText) {
+    addToHistory("user", userText);
+    onTranscript?.("user", userText);
+    await saveMessageToDb("user", userText);
+  }
+  if (agentText) {
+    addToHistory("assistant", agentText);
+    onTranscript?.("assistant", agentText);
+    await saveMessageToDb("assistant", agentText);
+  }
+}
+```
+
+### 2. Context-Aware Token Endpoint
+
+```typescript
+// elevenlabs-conversation-token/index.ts
+serve(async (req) => {
+  const { sessionId } = await req.json().catch(() => ({}));
+  
+  let conversationContext = "";
+  
+  if (sessionId) {
+    // Load recent messages
+    const { data: messages } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(15);
+    
+    if (messages && messages.length > 0) {
+      // Build context string
+      const recentMessages = messages.reverse()
+        .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+        .join("\n");
+      
+      conversationContext = `
+CONVERSATION HISTORY (continue naturally from here):
+${recentMessages}
+---
+Continue this conversation naturally. Acknowledge what was discussed before.`;
+    }
+  }
+  
+  // Get token with overrides
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${ELEVENLABS_AGENT_ID}`,
+    {
+      headers: { "xi-api-key": ELEVENLABS_API_KEY }
+    }
+  );
+  
+  const data = await response.json();
+  
+  return new Response(JSON.stringify({ 
+    token: data.token,
+    context: conversationContext 
+  }));
+});
+```
+
+### 3. Start Session with Overrides
+
+```typescript
+// VoiceConversation.tsx - startConversation
+const { data, error } = await supabase.functions.invoke(
+  "elevenlabs-conversation-token",
+  { body: { sessionId: sessionIdRef.current } }
+);
+
+await conversation.startSession({
+  conversationToken: data.token,
+  connectionType: "webrtc",
+  overrides: data.context ? {
+    agent: {
+      prompt: {
+        prompt: data.context
+      }
+    }
+  } : undefined
+});
+```
 
 ---
 
 ## Summary of Changes
 
-| Component | Change |
-|-----------|--------|
-| Database | Enable realtime on `messages` table |
-| `useChatSessions.ts` | Add realtime subscription helper |
-| `Chat.tsx` | Subscribe to realtime messages, refresh session list |
-| `ChatHistory.tsx` | Auto-close sheet after selection |
-| `VoiceConversation.tsx` | Show conversation history during voice mode |
+| Component | Change | Purpose |
+|-----------|--------|---------|
+| `VoiceConversation.tsx` | Add robust multi-format event parsing | Capture transcripts reliably |
+| `VoiceConversation.tsx` | Pass sessionId when starting voice | Enable context loading |
+| `elevenlabs-conversation-token` | Load messages and create context | Give voice agent memory |
+| `Chat.tsx` | Ensure realtime sync works | Show voice messages in chat |
+| `ChatHistory.tsx` | Add message previews | Better navigation |
+| Database | Add summary and has_voice columns | Track session metadata |
 
+---
+
+## Manual Steps Required
+
+After implementation, you should also:
+
+1. **Update your ElevenLabs Agent** in the ElevenLabs dashboard:
+   - Go to Agent Settings → Events
+   - Enable "User Transcript" and "Agent Response" events
+   - This ensures transcripts are sent to the app
+
+2. **Copy the Flourish system prompt** from `supabase/functions/chat/index.ts` to your ElevenLabs agent's system prompt to ensure personality consistency
+
+---
+
+## Expected Outcome
+
+After these changes:
+- Voice messages appear in the chat in real-time as you speak
+- When you select an old session and start voice mode, the agent remembers the conversation
+- Chat history shows previews and indicates voice sessions
+- Both text and voice contribute to the same conversation thread
