@@ -1,4 +1,4 @@
-import { LayoutDashboard, MessageCircle, BarChart3, Settings, LogOut, Heart } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Settings, LogOut, Heart, UserCircle, Calendar } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,6 +22,8 @@ const navItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Chat", url: "/chat", icon: MessageCircle },
   { title: "Exercises", url: "/exercises", icon: Heart },
+  { title: "Consultations", url: "/consultations", icon: UserCircle },
+  { title: "Appointments", url: "/appointments", icon: Calendar },
   { title: "Insights", url: "/insights", icon: BarChart3 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];

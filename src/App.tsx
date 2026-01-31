@@ -13,6 +13,17 @@ import Settings from "./pages/Settings";
 import Onboarding from "./pages/Onboarding";
 import Exercises from "./pages/Exercises";
 import NotFound from "./pages/NotFound";
+// Psychologist pages
+import PsychologistLogin from "./pages/psychologist/PsychologistLogin";
+import PsychologistSignup from "./pages/psychologist/PsychologistSignup";
+import PsychologistDashboard from "./pages/psychologist/PsychologistDashboard";
+import PsychologistSchedule from "./pages/psychologist/PsychologistSchedule";
+import PsychologistClients from "./pages/psychologist/PsychologistClients";
+import PsychologistSettings from "./pages/psychologist/PsychologistSettings";
+// Consultation pages
+import FindPsychologists from "./pages/consultations/FindPsychologists";
+import BookAppointment from "./pages/consultations/BookAppointment";
+import MyAppointments from "./pages/consultations/MyAppointments";
 
 const queryClient = new QueryClient();
 
@@ -32,6 +43,17 @@ const App = () => (
           <Route path="/insights" element={<Insights />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/exercises" element={<Exercises />} />
+          {/* Consultation routes for clients */}
+          <Route path="/consultations" element={<FindPsychologists />} />
+          <Route path="/consultations/book/:id" element={<BookAppointment />} />
+          <Route path="/appointments" element={<MyAppointments />} />
+          {/* Psychologist portal routes */}
+          <Route path="/psychologist/login" element={<PsychologistLogin />} />
+          <Route path="/psychologist/signup" element={<PsychologistSignup />} />
+          <Route path="/psychologist/dashboard" element={<PsychologistDashboard />} />
+          <Route path="/psychologist/schedule" element={<PsychologistSchedule />} />
+          <Route path="/psychologist/clients" element={<PsychologistClients />} />
+          <Route path="/psychologist/settings" element={<PsychologistSettings />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
