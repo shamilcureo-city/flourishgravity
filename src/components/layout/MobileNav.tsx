@@ -1,13 +1,13 @@
-import { LayoutDashboard, MessageCircle, BarChart3, Settings, Heart } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, UserCircle, Calendar } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { title: "Home", url: "/dashboard", icon: LayoutDashboard },
   { title: "Chat", url: "/chat", icon: MessageCircle },
-  { title: "Exercises", url: "/exercises", icon: Heart },
+  { title: "Consult", url: "/consultations", icon: UserCircle },
+  { title: "Appointments", url: "/appointments", icon: Calendar },
   { title: "Insights", url: "/insights", icon: BarChart3 },
-  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function MobileNav() {
