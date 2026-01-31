@@ -37,10 +37,8 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const lastSpeakingStateRef = useRef<boolean>(false);
   
   // Retry and connection tracking
-  const retryCountRef = useRef(0);
-  const maxRetries = 3;
   const connectionStartTimeRef = useRef<number>(0);
-  const startConversationRef = useRef<(isRetry?: boolean) => Promise<void>>();
+  const startConversationRef = useRef<(() => Promise<void>) | null>(null);
 
   // Keep sessionId ref in sync
   useEffect(() => {
@@ -108,29 +106,19 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     },
     onDisconnect: () => {
       console.log("Voice conversation disconnected");
-      
-      // Calculate how long we were connected
-      const connectedDuration = connectionStartTimeRef.current > 0 
-        ? Date.now() - connectionStartTimeRef.current 
-        : 0;
-      
-      // Only update status if we're not manually closing
+
+      // Only update status if we're not manually closing.
+      // IMPORTANT: Do NOT auto-reconnect here (it causes connect/disconnect loops when
+      // the underlying transport is failing).
       if (!isManuallyClosing.current) {
-        // If we disconnected very quickly (< 3 seconds) and we've connected before,
-        // it might be a transient error - try to reconnect
-        if (hasConnectedOnce.current && connectedDuration < 3000 && retryCountRef.current < maxRetries) {
-          console.log("Quick disconnect detected, attempting reconnect...");
-          retryCountRef.current++;
-          setTimeout(() => {
-            if (!isManuallyClosing.current && startConversationRef.current) {
-              startConversationRef.current(true);
-            }
-          }, 1000);
-          return;
-        }
-        
         setVoiceStatus("idle");
         setIsConnecting(false);
+
+        // Only surface an error if we had previously connected (otherwise startConversation
+        // will already handle initial connection failures).
+        if (hasConnectedOnce.current) {
+          setConnectionError("Disconnected. Tap Start Voice Chat to reconnect.");
+        }
       }
       
       // Flush any remaining buffered agent response
@@ -269,11 +257,7 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     }
   }, [conversation.status, conversation.isSpeaking]);
 
-  const startConversation = useCallback(async (isRetry = false) => {
-    if (!isRetry) {
-      retryCountRef.current = 0;
-    }
-    
+  const startConversation = useCallback(async () => {
     setIsConnecting(true);
     setVoiceStatus("connecting");
     setConnectionError(null);
@@ -327,19 +311,6 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     } catch (error) {
       console.error("Failed to start voice conversation:", error);
       
-      // Check if we should retry
-      if (retryCountRef.current < maxRetries && !isManuallyClosing.current) {
-        retryCountRef.current++;
-        console.log(`Retrying connection (attempt ${retryCountRef.current}/${maxRetries})...`);
-        
-        // Wait before retrying with exponential backoff
-        await new Promise(resolve => setTimeout(resolve, 1000 * retryCountRef.current));
-        
-        if (!isManuallyClosing.current) {
-          return startConversation(true);
-        }
-      }
-      
       if (error instanceof DOMException && error.name === "NotAllowedError") {
         toast.error("Microphone access denied. Please enable microphone permissions.");
       } else {
@@ -352,7 +323,7 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     }
   }, [conversation]);
 
-  // Keep ref in sync for use in onDisconnect callback
+  // Keep ref in sync for any callbacks that need it
   startConversationRef.current = startConversation;
 
   const stopConversation = useCallback(async () => {
