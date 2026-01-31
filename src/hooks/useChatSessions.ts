@@ -7,9 +7,6 @@ export interface ChatSession {
   title: string | null;
   created_at: string;
   updated_at: string;
-  summary?: string | null;
-  last_message_preview?: string | null;
-  has_voice_messages?: boolean;
 }
 
 export interface Message {
@@ -31,7 +28,7 @@ export function useChatSessions() {
 
       const { data, error } = await supabase
         .from("chat_sessions")
-        .select("id, user_id, title, created_at, updated_at, summary, last_message_preview, has_voice_messages")
+        .select("*")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(50);

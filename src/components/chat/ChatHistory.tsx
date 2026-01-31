@@ -1,29 +1,19 @@
-import { useState, useEffect } from "react";
 import { format } from "date-fns";
-import { useChatSessions } from "@/hooks/useChatSessions";
+import { useChatSessions, ChatSession } from "@/hooks/useChatSessions";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { History, Trash2, MessageCircle, Loader2, Mic } from "lucide-react";
+import { History, Trash2, MessageCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface ChatHistoryProps {
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
-  onRefreshRequest?: () => void;
 }
 
-export function ChatHistory({ currentSessionId, onSelectSession, onRefreshRequest }: ChatHistoryProps) {
-  const [open, setOpen] = useState(false);
-  const { sessions, loading, deleteSession, fetchSessions } = useChatSessions();
-
-  // Refresh sessions when sheet opens
-  useEffect(() => {
-    if (open) {
-      fetchSessions();
-    }
-  }, [open, fetchSessions]);
+export function ChatHistory({ currentSessionId, onSelectSession }: ChatHistoryProps) {
+  const { sessions, loading, deleteSession } = useChatSessions();
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
@@ -34,11 +24,6 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
       console.error("Error deleting session:", error);
       toast.error("Failed to delete conversation");
     }
-  };
-
-  const handleSelectSession = (sessionId: string) => {
-    onSelectSession(sessionId);
-    setOpen(false); // Close sheet after selection
   };
 
   const formatSessionDate = (dateStr: string) => {
@@ -52,14 +37,8 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
     return format(date, "MMM d");
   };
 
-  const truncatePreview = (text: string | null | undefined, maxLength = 60) => {
-    if (!text) return null;
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength).trim() + "...";
-  };
-
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet>
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon" className="shrink-0">
           <History className="h-5 w-5" />
@@ -88,7 +67,7 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
               {sessions.map((session) => (
                 <button
                   key={session.id}
-                  onClick={() => handleSelectSession(session.id)}
+                  onClick={() => onSelectSession(session.id)}
                   className={cn(
                     "w-full text-left p-3 rounded-lg transition-colors group",
                     currentSessionId === session.id
@@ -98,23 +77,10 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-medium truncate text-sm flex-1">
-                          {session.title || "New Conversation"}
-                        </p>
-                        {session.has_voice_messages && (
-                          <Mic className="h-3.5 w-3.5 text-primary shrink-0" />
-                        )}
-                      </div>
-                      
-                      {/* Message preview */}
-                      {session.last_message_preview && (
-                        <p className="text-xs opacity-60 truncate mt-0.5">
-                          {truncatePreview(session.last_message_preview)}
-                        </p>
-                      )}
-                      
-                      <p className="text-xs opacity-50 mt-1">
+                      <p className="font-medium truncate text-sm">
+                        {session.title || "New Conversation"}
+                      </p>
+                      <p className="text-xs opacity-70">
                         {formatSessionDate(session.updated_at)}
                       </p>
                     </div>

@@ -1,286 +1,129 @@
 
-# Complete Voice + Chat Unification Plan
 
-## Current Problems
+# Unify Chat and Voice into One Shared Experience
 
-After analyzing your codebase and database, I've identified these issues:
+## Current Problem
 
-### Problem 1: Voice Messages Not Appearing in Chat
-The `VoiceConversation.tsx` component saves messages to the database, BUT the message events from ElevenLabs may not be firing correctly. The code expects specific event types (`user_transcript` and `agent_response`) but ElevenLabs may send different event structures depending on agent configuration. The app needs to be robust and handle multiple event formats.
+Right now, your text chat and voice chat are completely separate systems:
 
-### Problem 2: No Past Conversation Context for Voice Mode
-When you open voice mode, the ElevenLabs agent starts completely fresh. It has no knowledge of what was discussed in the text chat or previous voice sessions. The agent needs to receive conversation history as context.
+- **Text chat** uses the Lovable AI backend with your detailed "Flourish" wellness companion personality, saves all messages to your database, and maintains full conversation history.
+- **Voice chat** uses ElevenLabs' own AI agent (configured in their dashboard) with a separate personality, doesn't save messages to your database, and starts fresh every time.
 
-### Problem 3: Chat History Navigation Works but Could Be Smoother
-The history panel exists but doesn't show message previews or indicate which sessions contain voice messages.
+This means:
+- The AI might have a different personality in voice vs text mode
+- Voice conversations aren't saved to history
+- Switching between voice and text loses context
 
----
+## Solution Options
 
-## Solution Overview
-
-```text
-+------------------+     +-------------------+     +------------------+
-|   Text Chat UI   |<--->|   Supabase DB     |<--->|   Voice Mode     |
-|   (Chat.tsx)     |     |   (messages)      |     | (VoiceConv.tsx)  |
-+------------------+     +-------------------+     +------------------+
-        |                        ^                        |
-        |  Realtime Sync         |                        |
-        +------------------------+------------------------+
-                                 |
-                          +------+-------+
-                          | Edge Function|
-                          | + Context    |
-                          +------+-------+
-                                 |
-                          +------+-------+
-                          | ElevenLabs   |
-                          | Agent        |
-                          +--------------+
-```
+There are **two approaches** to unify these experiences:
 
 ---
 
-## Implementation Plan
+### Option A: Save Voice Transcripts to Database (Simpler)
 
-### Part 1: Fix Voice Message Capture (Robust Event Handling)
+Keep using ElevenLabs for voice AI, but save the transcripts to your database so they appear in chat history.
 
-**File: `src/components/voice/VoiceConversation.tsx`**
+**What changes:**
+- When voice mode ends, save user/assistant transcripts to the `messages` table
+- Voice conversations appear in chat history
+- Users can continue a voice conversation in text mode
 
-The current code checks for specific event types, but ElevenLabs may send events differently. Update the `onMessage` handler to:
+**Limitations:**
+- ElevenLabs agent still has its own personality (configured in ElevenLabs dashboard)
+- You'd need to manually keep the ElevenLabs agent prompt in sync with your Flourish prompt
+- No shared context between voice and text during the same session
 
-1. Log all incoming messages for debugging
-2. Check multiple possible event structures
-3. Handle both finalized transcripts AND partial/tentative transcripts as fallback
-4. Only save finalized transcripts to avoid duplicate messages
-
-Changes:
-- Add more robust event parsing that checks for:
-  - `message.type === "user_transcript"` (current)
-  - `message.user_transcription_event` (direct access)
-  - `message.text` (alternative format)
-  - Fallback: capture from `isSpeaking` state changes
-- Add console logging to debug what events are actually received
-- Store the last user/assistant text to detect when conversation turns end
-
-### Part 2: Inject Conversation Context to Voice Agent
-
-**File: `supabase/functions/elevenlabs-conversation-token/index.ts`**
-
-Currently, the edge function just fetches a token. Enhance it to:
-
-1. Accept the current `sessionId` in the request body
-2. Load recent messages from that session (last 10-20 messages)
-3. Generate a brief AI summary of the conversation using Lovable AI
-4. Pass this context to ElevenLabs when getting the token
-
-ElevenLabs supports passing custom context via the `conversation_config_override` parameter when starting a session. We can use this to inject:
-- A summary of the conversation so far
-- The user's last few messages
-- Key topics discussed
-
-**File: `src/components/voice/VoiceConversation.tsx`**
-
-Update `startConversation` to:
-1. Pass the `sessionId` to the edge function
-2. Receive back the token PLUS any context/overrides
-3. Use `overrides` parameter when calling `startSession` to inject the conversation context
-
-### Part 3: Create Conversation Summary Helper
-
-**File: `supabase/functions/generate-summary/index.ts` (NEW)**
-
-Create a new edge function that:
-1. Takes a session_id
-2. Loads the messages
-3. Uses Lovable AI to generate a brief summary (2-3 sentences)
-4. Returns the summary
-
-This summary can be:
-- Stored in the `chat_sessions` table (add a `summary` column)
-- Injected into the ElevenLabs agent's first message prompt
-
-### Part 4: Enhance Chat History with Previews
-
-**File: `src/hooks/useChatSessions.ts`**
-
-Update to:
-1. Fetch the last message content for each session (as preview)
-2. Check if session contains any voice messages (for badge)
-
-**File: `src/components/chat/ChatHistory.tsx`**
-
-Update to:
-1. Show message preview snippet under session title
-2. Add microphone icon for sessions with voice messages
+**Effort:** Low - just add save logic when voice ends
 
 ---
 
-## Database Changes
+### Option B: Use ElevenLabs for Voice Only, Lovable AI for Thinking (Unified)
 
-Add columns to `chat_sessions` table:
-```sql
-ALTER TABLE public.chat_sessions 
-ADD COLUMN IF NOT EXISTS summary text,
-ADD COLUMN IF NOT EXISTS has_voice_messages boolean DEFAULT false;
-```
+Use ElevenLabs in **text-only mode** (voice input/output only) while your Lovable AI backend handles all the thinking and responses.
 
----
+**How it works:**
+1. Voice mode captures user speech via ElevenLabs and transcribes it
+2. Transcript is sent to your existing `chat` edge function (same as text chat)
+3. AI response is sent back to ElevenLabs for text-to-speech playback
+4. All messages saved to database with the current session
 
-## Detailed Technical Implementation
+**Benefits:**
+- One AI personality (Flourish) for both text and voice
+- All conversations saved to the same database/history
+- Full conversation context maintained across voice and text
+- User profile personalization works for voice too
 
-### 1. Enhanced Voice Message Handler
+**Limitations:**
+- Slightly higher latency (extra round-trip to Lovable AI)
+- More complex implementation
+- ElevenLabs agent becomes a "voice shell" only
 
-```typescript
-// VoiceConversation.tsx - onMessage handler
-onMessage: async (message) => {
-  console.log("Voice message received:", JSON.stringify(message, null, 2));
-  
-  // Try multiple ways to extract transcript
-  let userText: string | undefined;
-  let agentText: string | undefined;
-  
-  const msg = message as Record<string, unknown>;
-  
-  // Method 1: Standard event structure
-  if (msg.type === "user_transcript") {
-    const event = msg.user_transcription_event as Record<string, unknown>;
-    userText = event?.user_transcript as string;
-  } else if (msg.type === "agent_response") {
-    const event = msg.agent_response_event as Record<string, unknown>;
-    agentText = event?.agent_response as string;
-  }
-  
-  // Method 2: Alternative structures (some agents use these)
-  if (!userText && msg.user_transcript) {
-    userText = msg.user_transcript as string;
-  }
-  if (!agentText && msg.agent_response) {
-    agentText = msg.agent_response as string;
-  }
-  
-  // Method 3: Check for text field (some WebRTC implementations)
-  if (!userText && !agentText && msg.text && msg.role) {
-    if (msg.role === "user") userText = msg.text as string;
-    if (msg.role === "assistant") agentText = msg.text as string;
-  }
-  
-  // Save if we got something
-  if (userText) {
-    addToHistory("user", userText);
-    onTranscript?.("user", userText);
-    await saveMessageToDb("user", userText);
-  }
-  if (agentText) {
-    addToHistory("assistant", agentText);
-    onTranscript?.("assistant", agentText);
-    await saveMessageToDb("assistant", agentText);
-  }
-}
-```
-
-### 2. Context-Aware Token Endpoint
-
-```typescript
-// elevenlabs-conversation-token/index.ts
-serve(async (req) => {
-  const { sessionId } = await req.json().catch(() => ({}));
-  
-  let conversationContext = "";
-  
-  if (sessionId) {
-    // Load recent messages
-    const { data: messages } = await supabase
-      .from("messages")
-      .select("role, content")
-      .eq("session_id", sessionId)
-      .order("created_at", { ascending: false })
-      .limit(15);
-    
-    if (messages && messages.length > 0) {
-      // Build context string
-      const recentMessages = messages.reverse()
-        .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-        .join("\n");
-      
-      conversationContext = `
-CONVERSATION HISTORY (continue naturally from here):
-${recentMessages}
----
-Continue this conversation naturally. Acknowledge what was discussed before.`;
-    }
-  }
-  
-  // Get token with overrides
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${ELEVENLABS_AGENT_ID}`,
-    {
-      headers: { "xi-api-key": ELEVENLABS_API_KEY }
-    }
-  );
-  
-  const data = await response.json();
-  
-  return new Response(JSON.stringify({ 
-    token: data.token,
-    context: conversationContext 
-  }));
-});
-```
-
-### 3. Start Session with Overrides
-
-```typescript
-// VoiceConversation.tsx - startConversation
-const { data, error } = await supabase.functions.invoke(
-  "elevenlabs-conversation-token",
-  { body: { sessionId: sessionIdRef.current } }
-);
-
-await conversation.startSession({
-  conversationToken: data.token,
-  connectionType: "webrtc",
-  overrides: data.context ? {
-    agent: {
-      prompt: {
-        prompt: data.context
-      }
-    }
-  } : undefined
-});
-```
+**Effort:** Medium - need to restructure voice flow
 
 ---
 
-## Summary of Changes
+### Option C: Hybrid Approach (Recommended)
 
-| Component | Change | Purpose |
-|-----------|--------|---------|
-| `VoiceConversation.tsx` | Add robust multi-format event parsing | Capture transcripts reliably |
-| `VoiceConversation.tsx` | Pass sessionId when starting voice | Enable context loading |
-| `elevenlabs-conversation-token` | Load messages and create context | Give voice agent memory |
-| `Chat.tsx` | Ensure realtime sync works | Show voice messages in chat |
-| `ChatHistory.tsx` | Add message previews | Better navigation |
-| Database | Add summary and has_voice columns | Track session metadata |
+Keep ElevenLabs real-time voice for low-latency conversations, but:
+1. Sync the ElevenLabs agent prompt to match Flourish's personality
+2. Save all voice transcripts to the database in real-time
+3. When starting voice mode, inject recent text chat context into ElevenLabs
 
----
+**Benefits:**
+- Low-latency voice experience
+- Messages saved to shared database
+- Personality stays consistent (manual sync)
+- Some context sharing between modes
 
-## Manual Steps Required
-
-After implementation, you should also:
-
-1. **Update your ElevenLabs Agent** in the ElevenLabs dashboard:
-   - Go to Agent Settings → Events
-   - Enable "User Transcript" and "Agent Response" events
-   - This ensures transcripts are sent to the app
-
-2. **Copy the Flourish system prompt** from `supabase/functions/chat/index.ts` to your ElevenLabs agent's system prompt to ensure personality consistency
+**Effort:** Medium
 
 ---
 
-## Expected Outcome
+## Recommended Implementation: Option C (Hybrid)
 
-After these changes:
-- Voice messages appear in the chat in real-time as you speak
-- When you select an old session and start voice mode, the agent remembers the conversation
-- Chat history shows previews and indicates voice sessions
-- Both text and voice contribute to the same conversation thread
+### Changes Needed
+
+1. **Save voice messages in real-time**
+   - Update `VoiceConversation.tsx` to save transcripts to `messages` table as they happen
+   - Use the current session ID from Chat page
+
+2. **Pass session context to voice mode**
+   - When opening voice mode, pass the current `sessionId` to `VoiceConversation`
+   - Load recent messages and inject as context when starting ElevenLabs session
+
+3. **Sync ElevenLabs agent personality**
+   - Update your ElevenLabs agent's system prompt to match the Flourish personality from your `chat` edge function
+   - This is a manual step in the ElevenLabs dashboard
+
+4. **Update Chat page to handle voice messages**
+   - When `onTranscript` fires, also save to database (not just UI state)
+
+---
+
+## Technical Details
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/pages/Chat.tsx` | Pass `sessionId` to VoiceChat, save voice transcripts to DB |
+| `src/components/voice/VoiceChat.tsx` | Accept and pass `sessionId` prop |
+| `src/components/voice/VoiceConversation.tsx` | Save transcripts to `messages` table, inject context |
+
+### Database Changes
+None needed - the existing `messages` table already supports storing voice transcripts with the `role` column.
+
+### ElevenLabs Dashboard
+Copy the Flourish system prompt from your edge function into your ElevenLabs agent's configuration so both have the same personality.
+
+---
+
+## Summary
+
+| Approach | Unified Personality | Shared History | Latency | Effort |
+|----------|---------------------|----------------|---------|--------|
+| A: Save transcripts only | No (manual sync) | Yes | Low | Low |
+| B: Lovable AI for all | Yes | Yes | Higher | Medium |
+| **C: Hybrid (recommended)** | Yes (manual sync) | Yes | Low | Medium |
+

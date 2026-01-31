@@ -3,7 +3,6 @@ import { useConversation } from "@elevenlabs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { VoiceIndicator } from "./VoiceIndicator";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { X, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,50 +12,26 @@ interface VoiceConversationProps {
   sessionId?: string | null;
 }
 
-interface ConversationMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-}
-
 export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceConversationProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "speaking" | "listening">("idle");
   const [transcript, setTranscript] = useState<string>("");
-  const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const savedMessagesRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef(sessionId);
-  const historyEndRef = useRef<HTMLDivElement>(null);
-  const hasConnectedOnce = useRef(false);
-  const isManuallyClosing = useRef(false);
-  
-  // Track partial agent responses for buffering
-  const agentResponseBufferRef = useRef<string>("");
-  const lastSpeakingStateRef = useRef<boolean>(false);
-  
-  // Retry and connection tracking
-  const connectionStartTimeRef = useRef<number>(0);
-  const startConversationRef = useRef<(() => Promise<void>) | null>(null);
 
   // Keep sessionId ref in sync
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
-  // Auto-scroll conversation history
-  useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [conversationHistory]);
-
   // Save message to database
   const saveMessageToDb = useCallback(async (role: "user" | "assistant", content: string) => {
     const currentSessionId = sessionIdRef.current;
-    if (!currentSessionId || !content.trim()) return;
+    if (!currentSessionId) return;
     
     // Create a unique key to prevent duplicate saves
-    const messageKey = `${role}:${content.slice(0, 100)}`;
+    const messageKey = `${role}:${content.slice(0, 50)}`;
     if (savedMessagesRef.current.has(messageKey)) return;
     savedMessagesRef.current.add(messageKey);
 
@@ -68,183 +43,55 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
       });
       if (error) {
         console.error("Failed to save voice message:", error);
-        savedMessagesRef.current.delete(messageKey); // Allow retry
-      } else {
-        console.log(`Voice message saved: ${role} - ${content.slice(0, 50)}...`);
-        
-        // Update session to mark as having voice messages
-        await supabase
-          .from("chat_sessions")
-          .update({ 
-            has_voice_messages: true,
-            last_message_preview: content.slice(0, 100),
-            updated_at: new Date().toISOString()
-          })
-          .eq("id", currentSessionId);
       }
     } catch (err) {
       console.error("Error saving voice message:", err);
-      savedMessagesRef.current.delete(messageKey);
     }
-  }, []);
-
-  // Add message to conversation history
-  const addToHistory = useCallback((role: "user" | "assistant", content: string) => {
-    if (!content.trim()) return;
-    const id = `${Date.now()}-${role}-${Math.random()}`;
-    setConversationHistory(prev => [...prev, { id, role, content }]);
   }, []);
 
   const conversation = useConversation({
     onConnect: () => {
       console.log("Voice conversation connected");
-      hasConnectedOnce.current = true;
-      setConnectionError(null);
       setVoiceStatus("connected");
       setIsConnecting(false);
       toast.success("Voice mode activated");
     },
     onDisconnect: () => {
       console.log("Voice conversation disconnected");
-
-      // Only update status if we're not manually closing.
-      // IMPORTANT: Do NOT auto-reconnect here (it causes connect/disconnect loops when
-      // the underlying transport is failing).
-      if (!isManuallyClosing.current) {
-        setVoiceStatus("idle");
-        setIsConnecting(false);
-
-        // Only surface an error if we had previously connected (otherwise startConversation
-        // will already handle initial connection failures).
-        if (hasConnectedOnce.current) {
-          setConnectionError("Disconnected. Tap Start Voice Chat to reconnect.");
-        }
-      }
-      
-      // Flush any remaining buffered agent response
-      if (agentResponseBufferRef.current.trim()) {
-        const finalText = agentResponseBufferRef.current.trim();
-        addToHistory("assistant", finalText);
-        onTranscript?.("assistant", finalText);
-        saveMessageToDb("assistant", finalText);
-        agentResponseBufferRef.current = "";
-      }
+      setVoiceStatus("idle");
     },
     onMessage: async (message) => {
-      // Log all messages for debugging
-      console.log("Voice message received:", JSON.stringify(message, null, 2));
+      console.log("Voice message received:", message);
       
-      // Cast to access dynamic properties
+      // Handle different message types based on the message structure
       const msg = message as unknown as Record<string, unknown>;
-      
-      let userText: string | undefined;
-      let agentText: string | undefined;
-      
-      // ===== Method 1: Standard ElevenLabs event types =====
       if (msg.type === "user_transcript") {
         const event = msg.user_transcription_event as Record<string, unknown> | undefined;
-        userText = (event?.user_transcript || event?.transcript) as string | undefined;
-        console.log("Parsed user_transcript event:", userText);
+        const userText = event?.user_transcript as string | undefined;
+        if (userText) {
+          setTranscript(userText);
+          onTranscript?.("user", userText);
+          // Save to database if we have a session
+          await saveMessageToDb("user", userText);
+        }
       } else if (msg.type === "agent_response") {
         const event = msg.agent_response_event as Record<string, unknown> | undefined;
-        agentText = (event?.agent_response || event?.response) as string | undefined;
-        console.log("Parsed agent_response event:", agentText);
-      }
-      
-      // ===== Method 2: Direct property access (alternative format) =====
-      if (!userText && msg.user_transcript) {
-        userText = msg.user_transcript as string;
-        console.log("Found direct user_transcript:", userText);
-      }
-      if (!agentText && msg.agent_response) {
-        agentText = msg.agent_response as string;
-        console.log("Found direct agent_response:", agentText);
-      }
-      
-      // ===== Method 3: Generic text + role format =====
-      if (!userText && !agentText && msg.text && msg.role) {
-        if (msg.role === "user") {
-          userText = msg.text as string;
-          console.log("Found text+role user:", userText);
+        const agentText = event?.agent_response as string | undefined;
+        if (agentText) {
+          setTranscript(agentText);
+          onTranscript?.("assistant", agentText);
+          // Save to database if we have a session
+          await saveMessageToDb("assistant", agentText);
         }
-        if (msg.role === "assistant" || msg.role === "agent") {
-          agentText = msg.text as string;
-          console.log("Found text+role agent:", agentText);
-        }
-      }
-      
-      // ===== Method 4: Transcript field (some WebRTC implementations) =====
-      if (!userText && msg.transcript && msg.is_final) {
-        userText = msg.transcript as string;
-        console.log("Found transcript field:", userText);
-      }
-      
-      // ===== Method 5: Handle streaming chunks (agent_chat_response_part) =====
-      if (msg.type === "agent_chat_response_part" || msg.type === "text_delta") {
-        const chunk = (msg.text || msg.delta || msg.content) as string | undefined;
-        if (chunk) {
-          agentResponseBufferRef.current += chunk;
-          setTranscript(agentResponseBufferRef.current);
-        }
-        return; // Don't save partial chunks
-      }
-      
-      // ===== Method 6: Handle final agent response after streaming =====
-      if (msg.type === "agent_chat_response" || msg.type === "text_done") {
-        const fullText = (msg.text || msg.content || agentResponseBufferRef.current) as string;
-        if (fullText?.trim()) {
-          agentText = fullText.trim();
-          agentResponseBufferRef.current = "";
-        }
-      }
-      
-      // ===== Save finalized messages =====
-      if (userText?.trim()) {
-        setTranscript(userText);
-        addToHistory("user", userText);
-        onTranscript?.("user", userText);
-        await saveMessageToDb("user", userText);
-      }
-      
-      if (agentText?.trim()) {
-        setTranscript(agentText);
-        addToHistory("assistant", agentText);
-        onTranscript?.("assistant", agentText);
-        await saveMessageToDb("assistant", agentText);
       }
     },
     onError: (error) => {
-      // Log the error but don't crash - some errors are recoverable
       console.error("Voice conversation error:", error);
-      
-      // Only show error to user if we haven't connected successfully yet
-      if (!hasConnectedOnce.current) {
-        setConnectionError("Connection failed. Please try again.");
-        toast.error("Voice connection error. Please try again.");
-        setVoiceStatus("idle");
-        setIsConnecting(false);
-      }
-      // If we were connected before, just log it - the SDK may recover
+      toast.error("Voice connection error. Please try again.");
+      setVoiceStatus("idle");
+      setIsConnecting(false);
     },
   });
-
-  // Track speaking state changes to detect turn completion
-  useEffect(() => {
-    const wasSpeaking = lastSpeakingStateRef.current;
-    const isSpeaking = conversation.isSpeaking;
-    
-    // Agent just finished speaking - flush buffer if we have one
-    if (wasSpeaking && !isSpeaking && agentResponseBufferRef.current.trim()) {
-      const finalText = agentResponseBufferRef.current.trim();
-      console.log("Agent finished speaking, flushing buffer:", finalText.slice(0, 50));
-      addToHistory("assistant", finalText);
-      onTranscript?.("assistant", finalText);
-      saveMessageToDb("assistant", finalText);
-      agentResponseBufferRef.current = "";
-    }
-    
-    lastSpeakingStateRef.current = isSpeaking;
-  }, [conversation.isSpeaking, addToHistory, onTranscript, saveMessageToDb]);
 
   // Update voice status based on conversation state
   useEffect(() => {
@@ -260,62 +107,38 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const startConversation = useCallback(async () => {
     setIsConnecting(true);
     setVoiceStatus("connecting");
-    setConnectionError(null);
-    agentResponseBufferRef.current = "";
 
     try {
       // Request microphone permission
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Get conversation token from edge function WITH session context
-      const { data, error } = await supabase.functions.invoke("elevenlabs-conversation-token", {
-        body: { sessionId: sessionIdRef.current }
-      });
+      // Get conversation token from edge function
+      const { data, error } = await supabase.functions.invoke("elevenlabs-conversation-token");
 
       if (error) {
         console.error("Token fetch error:", error);
         throw new Error("Failed to get conversation token");
       }
 
-      if (!data?.token && !data?.signedUrl) {
+      if (!data?.token) {
         console.error("No token in response:", data);
         throw new Error("No token received from server");
       }
 
-      console.log("Starting voice session with token", data.hasContext ? "(with context)" : "(no context)");
-      connectionStartTimeRef.current = Date.now();
+      console.log("Starting voice session with token");
 
-      // Build session config - try with signedUrl if available, otherwise conversationToken
-      const sessionConfig: Parameters<typeof conversation.startSession>[0] = data.signedUrl 
-        ? {
-            signedUrl: data.signedUrl,
-          }
-        : {
-            conversationToken: data.token,
-            connectionType: "webrtc",
-          };
-
-      // If we have conversation context, inject it via overrides
-      if (data.context) {
-        sessionConfig.overrides = {
-          agent: {
-            prompt: {
-              prompt: data.context
-            }
-          }
-        };
-        console.log("Injecting conversation context for continuity");
-      }
-
-      await conversation.startSession(sessionConfig);
+      // Start the conversation with WebRTC
+      await conversation.startSession({
+        conversationToken: data.token,
+        connectionType: "webrtc",
+      });
     } catch (error) {
       console.error("Failed to start voice conversation:", error);
       
       if (error instanceof DOMException && error.name === "NotAllowedError") {
         toast.error("Microphone access denied. Please enable microphone permissions.");
       } else {
-        setConnectionError("Connection failed. Please try again.");
-        toast.error("Voice connection failed. Please try again.");
+        toast.error(error instanceof Error ? error.message : "Failed to start voice mode");
       }
       
       setVoiceStatus("idle");
@@ -323,19 +146,13 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     }
   }, [conversation]);
 
-  // Keep ref in sync for any callbacks that need it
-  startConversationRef.current = startConversation;
-
   const stopConversation = useCallback(async () => {
-    isManuallyClosing.current = true;
     try {
       await conversation.endSession();
       setVoiceStatus("idle");
       setTranscript("");
     } catch (error) {
       console.error("Error ending conversation:", error);
-    } finally {
-      isManuallyClosing.current = false;
     }
   }, [conversation]);
 
@@ -349,7 +166,6 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   }, [conversation, isMuted]);
 
   const handleClose = useCallback(() => {
-    isManuallyClosing.current = true;
     if (conversation.status === "connected") {
       stopConversation();
     }
@@ -358,11 +174,9 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
 
   // Auto-start conversation when component mounts
   useEffect(() => {
-    if (voiceStatus === "idle" && !isConnecting && !connectionError) {
+    if (voiceStatus === "idle" && !isConnecting) {
       startConversation();
     }
-    // Only run on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -377,8 +191,8 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         <X className="h-6 w-6" />
       </Button>
 
-      {/* Voice indicator and transcript area */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 w-full max-w-md">
+      {/* Voice indicator */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-8">
         <h2 className="text-2xl font-semibold text-foreground">Voice Mode</h2>
         
         <VoiceIndicator
@@ -387,43 +201,18 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
           outputLevel={conversation.getOutputVolume?.() || 0}
         />
 
-        {/* Conversation history */}
-        {conversationHistory.length > 0 && (
-          <ScrollArea className="w-full max-h-48 border rounded-lg p-3 bg-muted/30">
-            <div className="space-y-3">
-              {conversationHistory.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
-                >
-                  <span className="text-xs text-muted-foreground mb-0.5">
-                    {msg.role === "user" ? "You" : "Flourish"}
-                  </span>
-                  <p className={`text-sm px-3 py-2 rounded-lg max-w-[85%] ${
-                    msg.role === "user" 
-                      ? "bg-primary text-primary-foreground" 
-                      : "bg-secondary text-secondary-foreground"
-                  }`}>
-                    {msg.content}
-                  </p>
-                </div>
-              ))}
-              <div ref={historyEndRef} />
-            </div>
-          </ScrollArea>
-        )}
-
-        {/* Live transcript indicator */}
-        {transcript && voiceStatus !== "idle" && (
-          <div className="text-center animate-pulse">
-            <p className="text-xs text-muted-foreground mb-1">
-              {voiceStatus === "speaking" ? "AI is speaking..." : "Listening..."}
+        {/* Live transcript */}
+        {transcript && (
+          <div className="max-w-md text-center">
+            <p className="text-sm text-muted-foreground mb-1">
+              {voiceStatus === "speaking" ? "AI says:" : "You said:"}
             </p>
+            <p className="text-foreground">{transcript}</p>
           </div>
         )}
 
         {/* Hint text */}
-        {voiceStatus === "listening" && conversationHistory.length === 0 && (
+        {voiceStatus === "listening" && (
           <p className="text-sm text-muted-foreground">
             Speak naturally — I'll respond when you pause
           </p>
@@ -456,7 +245,7 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         <Button
           variant={conversation.status === "connected" ? "destructive" : "default"}
           size="lg"
-          onClick={conversation.status === "connected" ? stopConversation : () => startConversation()}
+          onClick={conversation.status === "connected" ? stopConversation : startConversation}
           disabled={isConnecting}
           className="h-14 px-8 rounded-full"
         >

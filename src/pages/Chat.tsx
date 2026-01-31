@@ -9,11 +9,10 @@ import { VoiceChat } from "@/components/voice/VoiceChat";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { useChatSessions, Message as DbMessage } from "@/hooks/useChatSessions";
+import { useChatSessions } from "@/hooks/useChatSessions";
 import { useProfile } from "@/hooks/useProfile";
 
 interface Message {
-  id?: string;
   role: "user" | "assistant";
   content: string;
 }
@@ -26,14 +25,14 @@ export default function Chat() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { loadSessionMessages, updateSessionTitle, fetchSessions } = useChatSessions();
+  const { loadSessionMessages, updateSessionTitle } = useChatSessions();
   const { profile } = useProfile();
-  const processedMessageIds = useRef<Set<string>>(new Set());
 
   // Build profile data for AI personalization
   const getProfileData = useCallback(async () => {
     if (!profile) return undefined;
     
+    // Get recent mood average
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return undefined;
     
@@ -64,44 +63,6 @@ export default function Chat() {
     scrollToBottom();
   }, [messages]);
 
-  // Subscribe to realtime messages for current session
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const channel = supabase
-      .channel(`messages-${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        (payload) => {
-          const newMsg = payload.new as DbMessage;
-          
-          // Skip if already processed
-          if (processedMessageIds.current.has(newMsg.id)) return;
-          processedMessageIds.current.add(newMsg.id);
-
-          // Add to UI if not already present (check by content to avoid duplicates)
-          setMessages((prev) => {
-            const exists = prev.some(
-              (m) => m.content === newMsg.content && m.role === newMsg.role
-            );
-            if (exists) return prev;
-            return [...prev, { id: newMsg.id, role: newMsg.role, content: newMsg.content }];
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [sessionId]);
-
   // Start with a new session
   useEffect(() => {
     const init = async () => {
@@ -122,13 +83,13 @@ export default function Chat() {
       }
 
       setSessionId(data.id);
-      await getInitialGreeting(data.id);
+      await getInitialGreeting();
     };
 
     init();
   }, []);
 
-  const getInitialGreeting = async (newSessionId: string) => {
+  const getInitialGreeting = async () => {
     try {
       const profileData = await getProfileData();
       const response = await fetch(CHAT_URL, {
@@ -153,14 +114,13 @@ export default function Chat() {
       });
 
       // Save the greeting to database
-      await supabase.from("messages").insert({
-        session_id: newSessionId,
-        role: "assistant",
-        content: assistantContent,
-      });
-      
-      // Refresh sessions list
-      fetchSessions();
+      if (sessionId) {
+        await supabase.from("messages").insert({
+          session_id: sessionId,
+          role: "assistant",
+          content: assistantContent,
+        });
+      }
     } catch (error) {
       console.error("Error getting greeting:", error);
       setMessages([{
@@ -285,7 +245,6 @@ export default function Chat() {
 
     setIsInitializing(true);
     setMessages([]);
-    processedMessageIds.current.clear();
 
     const { data, error } = await supabase
       .from("chat_sessions")
@@ -299,7 +258,7 @@ export default function Chat() {
     }
 
     setSessionId(data.id);
-    await getInitialGreeting(data.id);
+    await getInitialGreeting();
   };
 
   const handleSelectSession = async (selectedSessionId: string) => {
@@ -307,13 +266,10 @@ export default function Chat() {
 
     setIsInitializing(true);
     setSessionId(selectedSessionId);
-    processedMessageIds.current.clear();
 
     try {
       const loadedMessages = await loadSessionMessages(selectedSessionId);
-      // Mark loaded messages as processed
-      loadedMessages.forEach((m) => processedMessageIds.current.add(m.id));
-      setMessages(loadedMessages.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+      setMessages(loadedMessages.map((m) => ({ role: m.role, content: m.content })));
     } catch (error) {
       console.error("Error loading session:", error);
       toast.error("Failed to load conversation");
@@ -356,7 +312,7 @@ export default function Chat() {
             <div className="space-y-6">
               {messages.map((message, index) => (
                 <ChatMessage
-                  key={message.id || index}
+                  key={index}
                   role={message.role}
                   content={message.content}
                   isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
@@ -370,7 +326,7 @@ export default function Chat() {
           ) : (
             messages.map((message, index) => (
               <ChatMessage
-                key={message.id || index}
+                key={index}
                 role={message.role}
                 content={message.content}
                 isStreaming={isLoading && index === messages.length - 1 && message.role === "assistant"}
@@ -392,8 +348,7 @@ export default function Chat() {
             disabled={isLoading || isInitializing}
             sessionId={sessionId}
             onTranscript={(role, text) => {
-              // Voice transcripts are saved via realtime subscription
-              // Just update local state for immediate feedback
+              // Add voice transcripts to message history (DB save is handled by VoiceConversation)
               setMessages(prev => [...prev, { role, content: text }]);
             }}
           />
