@@ -4,7 +4,7 @@ import { useChatSessions } from "@/hooks/useChatSessions";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { History, Trash2, MessageCircle, Loader2 } from "lucide-react";
+import { History, Trash2, MessageCircle, Loader2, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +52,12 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
     return format(date, "MMM d");
   };
 
+  const truncatePreview = (text: string | null | undefined, maxLength = 60) => {
+    if (!text) return null;
+    if (text.length <= maxLength) return text;
+    return text.slice(0, maxLength).trim() + "...";
+  };
+
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
@@ -92,10 +98,23 @@ export function ChatHistory({ currentSessionId, onSelectSession, onRefreshReques
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate text-sm">
-                        {session.title || "New Conversation"}
-                      </p>
-                      <p className="text-xs opacity-70">
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium truncate text-sm flex-1">
+                          {session.title || "New Conversation"}
+                        </p>
+                        {session.has_voice_messages && (
+                          <Mic className="h-3.5 w-3.5 text-primary shrink-0" />
+                        )}
+                      </div>
+                      
+                      {/* Message preview */}
+                      {session.last_message_preview && (
+                        <p className="text-xs opacity-60 truncate mt-0.5">
+                          {truncatePreview(session.last_message_preview)}
+                        </p>
+                      )}
+                      
+                      <p className="text-xs opacity-50 mt-1">
                         {formatSessionDate(session.updated_at)}
                       </p>
                     </div>

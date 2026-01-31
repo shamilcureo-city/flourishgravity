@@ -28,6 +28,10 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const savedMessagesRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef(sessionId);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  
+  // Track partial agent responses for buffering
+  const agentResponseBufferRef = useRef<string>("");
+  const lastSpeakingStateRef = useRef<boolean>(false);
 
   // Keep sessionId ref in sync
   useEffect(() => {
@@ -42,10 +46,10 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   // Save message to database
   const saveMessageToDb = useCallback(async (role: "user" | "assistant", content: string) => {
     const currentSessionId = sessionIdRef.current;
-    if (!currentSessionId) return;
+    if (!currentSessionId || !content.trim()) return;
     
     // Create a unique key to prevent duplicate saves
-    const messageKey = `${role}:${content.slice(0, 50)}`;
+    const messageKey = `${role}:${content.slice(0, 100)}`;
     if (savedMessagesRef.current.has(messageKey)) return;
     savedMessagesRef.current.add(messageKey);
 
@@ -57,15 +61,30 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
       });
       if (error) {
         console.error("Failed to save voice message:", error);
+        savedMessagesRef.current.delete(messageKey); // Allow retry
+      } else {
+        console.log(`Voice message saved: ${role} - ${content.slice(0, 50)}...`);
+        
+        // Update session to mark as having voice messages
+        await supabase
+          .from("chat_sessions")
+          .update({ 
+            has_voice_messages: true,
+            last_message_preview: content.slice(0, 100),
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", currentSessionId);
       }
     } catch (err) {
       console.error("Error saving voice message:", err);
+      savedMessagesRef.current.delete(messageKey);
     }
   }, []);
 
   // Add message to conversation history
   const addToHistory = useCallback((role: "user" | "assistant", content: string) => {
-    const id = `${Date.now()}-${role}`;
+    if (!content.trim()) return;
+    const id = `${Date.now()}-${role}-${Math.random()}`;
     setConversationHistory(prev => [...prev, { id, role, content }]);
   }, []);
 
@@ -79,30 +98,97 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
     onDisconnect: () => {
       console.log("Voice conversation disconnected");
       setVoiceStatus("idle");
+      
+      // Flush any remaining buffered agent response
+      if (agentResponseBufferRef.current.trim()) {
+        const finalText = agentResponseBufferRef.current.trim();
+        addToHistory("assistant", finalText);
+        onTranscript?.("assistant", finalText);
+        saveMessageToDb("assistant", finalText);
+        agentResponseBufferRef.current = "";
+      }
     },
     onMessage: async (message) => {
-      console.log("Voice message received:", message);
+      // Log all messages for debugging
+      console.log("Voice message received:", JSON.stringify(message, null, 2));
       
-      // Handle different message types based on the message structure
+      // Cast to access dynamic properties
       const msg = message as unknown as Record<string, unknown>;
+      
+      let userText: string | undefined;
+      let agentText: string | undefined;
+      
+      // ===== Method 1: Standard ElevenLabs event types =====
       if (msg.type === "user_transcript") {
         const event = msg.user_transcription_event as Record<string, unknown> | undefined;
-        const userText = event?.user_transcript as string | undefined;
-        if (userText) {
-          setTranscript(userText);
-          addToHistory("user", userText);
-          onTranscript?.("user", userText);
-          await saveMessageToDb("user", userText);
-        }
+        userText = (event?.user_transcript || event?.transcript) as string | undefined;
+        console.log("Parsed user_transcript event:", userText);
       } else if (msg.type === "agent_response") {
         const event = msg.agent_response_event as Record<string, unknown> | undefined;
-        const agentText = event?.agent_response as string | undefined;
-        if (agentText) {
-          setTranscript(agentText);
-          addToHistory("assistant", agentText);
-          onTranscript?.("assistant", agentText);
-          await saveMessageToDb("assistant", agentText);
+        agentText = (event?.agent_response || event?.response) as string | undefined;
+        console.log("Parsed agent_response event:", agentText);
+      }
+      
+      // ===== Method 2: Direct property access (alternative format) =====
+      if (!userText && msg.user_transcript) {
+        userText = msg.user_transcript as string;
+        console.log("Found direct user_transcript:", userText);
+      }
+      if (!agentText && msg.agent_response) {
+        agentText = msg.agent_response as string;
+        console.log("Found direct agent_response:", agentText);
+      }
+      
+      // ===== Method 3: Generic text + role format =====
+      if (!userText && !agentText && msg.text && msg.role) {
+        if (msg.role === "user") {
+          userText = msg.text as string;
+          console.log("Found text+role user:", userText);
         }
+        if (msg.role === "assistant" || msg.role === "agent") {
+          agentText = msg.text as string;
+          console.log("Found text+role agent:", agentText);
+        }
+      }
+      
+      // ===== Method 4: Transcript field (some WebRTC implementations) =====
+      if (!userText && msg.transcript && msg.is_final) {
+        userText = msg.transcript as string;
+        console.log("Found transcript field:", userText);
+      }
+      
+      // ===== Method 5: Handle streaming chunks (agent_chat_response_part) =====
+      if (msg.type === "agent_chat_response_part" || msg.type === "text_delta") {
+        const chunk = (msg.text || msg.delta || msg.content) as string | undefined;
+        if (chunk) {
+          agentResponseBufferRef.current += chunk;
+          setTranscript(agentResponseBufferRef.current);
+        }
+        return; // Don't save partial chunks
+      }
+      
+      // ===== Method 6: Handle final agent response after streaming =====
+      if (msg.type === "agent_chat_response" || msg.type === "text_done") {
+        const fullText = (msg.text || msg.content || agentResponseBufferRef.current) as string;
+        if (fullText?.trim()) {
+          agentText = fullText.trim();
+          agentResponseBufferRef.current = "";
+        }
+      }
+      
+      // ===== Save finalized messages =====
+      if (userText?.trim()) {
+        setTranscript(userText);
+        addToHistory("user", userText);
+        onTranscript?.("user", userText);
+        await saveMessageToDb("user", userText);
+      }
+      
+      if (agentText?.trim()) {
+        setTranscript(agentText);
+        addToHistory("assistant", agentText);
+        onTranscript?.("assistant", agentText);
+        await saveMessageToDb("assistant", agentText);
       }
     },
     onError: (error) => {
@@ -112,6 +198,24 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
       setIsConnecting(false);
     },
   });
+
+  // Track speaking state changes to detect turn completion
+  useEffect(() => {
+    const wasSpeaking = lastSpeakingStateRef.current;
+    const isSpeaking = conversation.isSpeaking;
+    
+    // Agent just finished speaking - flush buffer if we have one
+    if (wasSpeaking && !isSpeaking && agentResponseBufferRef.current.trim()) {
+      const finalText = agentResponseBufferRef.current.trim();
+      console.log("Agent finished speaking, flushing buffer:", finalText.slice(0, 50));
+      addToHistory("assistant", finalText);
+      onTranscript?.("assistant", finalText);
+      saveMessageToDb("assistant", finalText);
+      agentResponseBufferRef.current = "";
+    }
+    
+    lastSpeakingStateRef.current = isSpeaking;
+  }, [conversation.isSpeaking, addToHistory, onTranscript, saveMessageToDb]);
 
   // Update voice status based on conversation state
   useEffect(() => {
@@ -127,13 +231,16 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const startConversation = useCallback(async () => {
     setIsConnecting(true);
     setVoiceStatus("connecting");
+    agentResponseBufferRef.current = "";
 
     try {
       // Request microphone permission
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Get conversation token from edge function
-      const { data, error } = await supabase.functions.invoke("elevenlabs-conversation-token");
+      // Get conversation token from edge function WITH session context
+      const { data, error } = await supabase.functions.invoke("elevenlabs-conversation-token", {
+        body: { sessionId: sessionIdRef.current }
+      });
 
       if (error) {
         console.error("Token fetch error:", error);
@@ -145,13 +252,27 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
         throw new Error("No token received from server");
       }
 
-      console.log("Starting voice session with token");
+      console.log("Starting voice session with token", data.hasContext ? "(with context)" : "(no context)");
 
-      // Start the conversation with WebRTC
-      await conversation.startSession({
+      // Build session config with optional context injection
+      const sessionConfig: Parameters<typeof conversation.startSession>[0] = {
         conversationToken: data.token,
         connectionType: "webrtc",
-      });
+      };
+
+      // If we have conversation context, inject it via overrides
+      if (data.context) {
+        sessionConfig.overrides = {
+          agent: {
+            prompt: {
+              prompt: data.context
+            }
+          }
+        };
+        console.log("Injecting conversation context for continuity");
+      }
+
+      await conversation.startSession(sessionConfig);
     } catch (error) {
       console.error("Failed to start voice conversation:", error);
       
