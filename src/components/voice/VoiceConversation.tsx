@@ -25,9 +25,12 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "speaking" | "listening">("idle");
   const [transcript, setTranscript] = useState<string>("");
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const savedMessagesRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef(sessionId);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const hasConnectedOnce = useRef(false);
+  const isManuallyClosing = useRef(false);
   
   // Track partial agent responses for buffering
   const agentResponseBufferRef = useRef<string>("");
@@ -91,13 +94,20 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   const conversation = useConversation({
     onConnect: () => {
       console.log("Voice conversation connected");
+      hasConnectedOnce.current = true;
+      setConnectionError(null);
       setVoiceStatus("connected");
       setIsConnecting(false);
       toast.success("Voice mode activated");
     },
     onDisconnect: () => {
       console.log("Voice conversation disconnected");
-      setVoiceStatus("idle");
+      
+      // Only update status if we're not manually closing
+      if (!isManuallyClosing.current) {
+        setVoiceStatus("idle");
+        setIsConnecting(false);
+      }
       
       // Flush any remaining buffered agent response
       if (agentResponseBufferRef.current.trim()) {
@@ -192,10 +202,17 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
       }
     },
     onError: (error) => {
+      // Log the error but don't crash - some errors are recoverable
       console.error("Voice conversation error:", error);
-      toast.error("Voice connection error. Please try again.");
-      setVoiceStatus("idle");
-      setIsConnecting(false);
+      
+      // Only show error to user if we haven't connected successfully yet
+      if (!hasConnectedOnce.current) {
+        setConnectionError("Connection failed. Please try again.");
+        toast.error("Voice connection error. Please try again.");
+        setVoiceStatus("idle");
+        setIsConnecting(false);
+      }
+      // If we were connected before, just log it - the SDK may recover
     },
   });
 
@@ -288,12 +305,15 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   }, [conversation]);
 
   const stopConversation = useCallback(async () => {
+    isManuallyClosing.current = true;
     try {
       await conversation.endSession();
       setVoiceStatus("idle");
       setTranscript("");
     } catch (error) {
       console.error("Error ending conversation:", error);
+    } finally {
+      isManuallyClosing.current = false;
     }
   }, [conversation]);
 
@@ -307,6 +327,7 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
   }, [conversation, isMuted]);
 
   const handleClose = useCallback(() => {
+    isManuallyClosing.current = true;
     if (conversation.status === "connected") {
       stopConversation();
     }
@@ -315,9 +336,11 @@ export function VoiceConversation({ onClose, onTranscript, sessionId }: VoiceCon
 
   // Auto-start conversation when component mounts
   useEffect(() => {
-    if (voiceStatus === "idle" && !isConnecting) {
+    if (voiceStatus === "idle" && !isConnecting && !connectionError) {
       startConversation();
     }
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
